@@ -37,3 +37,7 @@ npm-debug.log*
 
 # Build
 build/
+
+# Respaldos de base de datos (contienen PII de clientes — NUNCA commitear)
+packages/database/backups/
+*.backup
