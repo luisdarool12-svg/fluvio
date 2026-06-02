@@ -1,9 +1,10 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from routers import reservations, customers, tables
+from jobs.noshow import run_nightly_noshow_check
 
 load_dotenv()
 
@@ -24,6 +25,18 @@ app.add_middleware(
 app.include_router(reservations.router, prefix="/reservations", tags=["reservations"])
 app.include_router(customers.router, prefix="/customers", tags=["customers"])
 app.include_router(tables.router, prefix="/tables", tags=["tables"])
+
+
+@app.post("/internal/noshow/run")
+def trigger_noshow_check(x_internal_secret: str = Header(default="")):
+    """
+    Dispara el chequeo nocturno de no-show. Lo invoca un cron externo cada hora;
+    el job solo actúa sobre negocios cuya hora local sea ~22:00.
+    """
+    expected = os.getenv("INTERNAL_JOB_SECRET", "")
+    if not expected or x_internal_secret != expected:
+        raise HTTPException(status_code=401, detail="Secreto interno inválido")
+    return run_nightly_noshow_check()
 
 
 @app.get("/health")
