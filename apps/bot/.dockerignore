@@ -1,0 +1,17 @@
+# El bridge de Baileys es un SERVICIO APARTE (tiene su propio Dockerfile) → no va en la imagen del bot
+baileys-bridge
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+.pytest_cache
+.mypy_cache
+
+# Otros
+.DS_Store
+.env
+Dockerfile
+.dockerignore
