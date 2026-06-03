@@ -1,4 +1,4 @@
-# OptimizaAI — SaaS de Reservaciones + IA para Restaurantes
+# Fluvio — SaaS de Reservaciones + IA para Restaurantes
 
 ## Objetivo
 Plataforma multi-tenant de reservaciones con agente de IA vía WhatsApp para restaurantes.

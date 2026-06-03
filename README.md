@@ -1,4 +1,4 @@
-# OptimizaAI
+# Fluvio
 
 SaaS de reservaciones + agente IA para restaurantes. Arquitectura multi-tenant.
 
