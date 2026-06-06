@@ -43,6 +43,8 @@ def get_system_prompt(business: dict) -> str:
     """
     Builds the full system prompt for the given business.
     'business' is a row from the businesses table, including bot_config JSONB.
+    The static portion is stored in bot_config.system_prompt (written by the
+    Chatbot panel's System Prompt Builder when the owner saves a config).
     """
     bot_config: dict = business.get("bot_config") or {}
     static_prompt: str = bot_config.get("system_prompt", "")

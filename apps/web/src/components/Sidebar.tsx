@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  LayoutDashboard, Calendar, ShieldAlert, Users, LayoutGrid, Settings, Zap, ChevronRight,
+  LayoutDashboard, Calendar, ShieldAlert, Users, LayoutGrid, Settings, Zap, ChevronRight, MessageSquare,
 } from 'lucide-react'
 import { Wordmark } from './Logo'
 import { Avatar } from './Avatar'
@@ -10,6 +10,7 @@ import { Avatar } from './Avatar'
 const NAV = [
   { href: '/dashboard',                 icon: <LayoutDashboard size={18} />, label: 'Dashboard',      count: null },
   { href: '/dashboard/reservaciones',   icon: <Calendar size={18} />,        label: 'Reservaciones',  count: 10   },
+  { href: '/dashboard/chatbot',         icon: <MessageSquare size={18} />,   label: 'Chatbot',        count: null },
   { href: '/dashboard/riesgo',          icon: <ShieldAlert size={18} />,     label: 'Riesgo no-show', count: null },
   { href: '/dashboard/clientes',        icon: <Users size={18} />,           label: 'Clientes',       count: null },
   { href: '/dashboard/mesas',           icon: <LayoutGrid size={18} />,      label: 'Mesas',          count: null },
