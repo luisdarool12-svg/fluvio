@@ -71,11 +71,12 @@ async def _send_whatsapp_cloud(to: str, text: str, phone_num_id: str):
     token = os.getenv("WHATSAPP_TOKEN", "")
     url = f"https://graph.facebook.com/v20.0/{phone_num_id}/messages"
     async with httpx.AsyncClient() as client:
-        await client.post(
+        resp = await client.post(
             url,
             json={"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": text}},
             headers={"Authorization": f"Bearer {token}"},
         )
+        print(f"[send] status={resp.status_code} body={resp.text}")
 
 
 # ─── Endpoint interno para Baileys bridge ────────────────────────────────────
