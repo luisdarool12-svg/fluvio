@@ -534,7 +534,7 @@ export function SystemPromptBuilder({ businessId }: { businessId: string | null 
       </Section>
 
       {/* Section 5: Escalation */}
-      <Section title="Reglas de Escalación" subtitle="Cuándo el bot debe pasarle la conversación a una persona" open={!!open.escalation} onToggle={() => toggleSection('escalation')} complete={true} tooltip="El bot pausará y te avisará">
+      <Section title="Reglas de Escalación" subtitle="Cuándo el bot debe pasarle la conversación a una persona" open={!!open.escalation} onToggle={() => toggleSection('escalation')} complete={true}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {([
             ['negative_feedback', 'Quejas o comentarios negativos'],
