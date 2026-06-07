@@ -18,7 +18,7 @@ Plataforma SaaS de reservaciones + agente de IA por WhatsApp. Suscripción mensu
 
 ## Piloto
 
-**Duble Bistró Moderne** — León, Gto.
+**Dublé Bistró** — León, Gto.
 - Restaurante con volumen de reservaciones activo
 - Laboratorio real para validar el producto
 

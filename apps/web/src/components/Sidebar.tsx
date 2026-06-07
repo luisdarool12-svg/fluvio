@@ -30,7 +30,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       <div className={`sb-backdrop ${open ? 'show' : ''}`} onClick={onClose} />
       <aside className={`sidebar ${open ? 'open' : ''}`}>
         <div className="sb-brand">
-          <Wordmark size={28} business="Duble Bistró" />
+          <Wordmark size={28} business="Dublé Bistró" />
         </div>
 
         <nav className="sb-nav">

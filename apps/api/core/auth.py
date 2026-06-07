@@ -5,7 +5,7 @@ from jose import jwt, JWTError
 
 bearer = HTTPBearer()
 
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+SUPABASE_JWT_SECRET = os.environ["SUPABASE_JWT_SECRET"]
 
 
 def get_business_id(

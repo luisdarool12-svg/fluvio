@@ -5,7 +5,7 @@
 
 ---
 
-## Fase 1 — MVP funcional (Duble Bistró) · Semanas 1–4
+## Fase 1 — MVP funcional (Dublé Bistró) · Semanas 1–4
 *Meta: el sistema reemplaza Google Calendar + reduce no-shows en Duble*
 
 - [x] Estructura del monorepo y repositorio git

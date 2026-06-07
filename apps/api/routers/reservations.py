@@ -172,7 +172,7 @@ def confirm_reservation(
         raise HTTPException(status_code=404, detail="Reserva no encontrada")
 
     score = calculate_no_show_score(reservation_id, db=db)
-    db.table("reservations").update({"no_show_score": score}).eq("id", reservation_id).execute()
+    db.table("reservations").update({"no_show_score": score}).eq("id", reservation_id).eq("business_id", business_id).execute()
     log_action(db, business_id, reservation_id, "manual_confirm", score)
 
     row = updated.data[0]

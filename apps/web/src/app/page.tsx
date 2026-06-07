@@ -8,7 +8,7 @@ const CHAT = [
   { from: 'user', text: 'Hola, quiero reservar mesa para 2 el sábado 🙂' },
   { from: 'bot',  text: '¡Hola! Con gusto. ¿A qué hora prefieres?' },
   { from: 'user', text: 'A las 8pm' },
-  { from: 'bot',  text: '✅ Listo, Carlos. Mesa para 2 el sábado 30 de mayo a las 8pm en Duble Bistró. Te enviamos confirmación.' },
+  { from: 'bot',  text: '✅ Listo, Carlos. Mesa para 2 el sábado 30 de mayo a las 8pm en Dublé Bistró. Te enviamos confirmación.' },
 ]
 
 export default function LandingPage() {
@@ -110,7 +110,7 @@ export default function LandingPage() {
                   <Logo size={22} />
                 </div>
                 <div>
-                  <div style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>Duble Bistró</div>
+                  <div style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>Dublé Bistró</div>
                   <div style={{ color: 'rgba(255,255,255,.7)', fontSize: 12 }}>en línea</div>
                 </div>
               </div>

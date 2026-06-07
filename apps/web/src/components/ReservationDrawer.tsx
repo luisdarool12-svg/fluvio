@@ -116,7 +116,7 @@ export function ReservationDrawer({ onClose, onSave }: ReservationDrawerProps) {
             <span style={{ fontWeight: 700, fontSize: 16, fontFamily: 'var(--font-display)', letterSpacing: '-0.02em' }}>
               Nueva reservación
             </span>
-            <span className="faint" style={{ fontSize: 13 }}>Duble Bistró · {todayLabel}</span>
+            <span className="faint" style={{ fontSize: 13 }}>Dublé Bistró · {todayLabel}</span>
           </div>
           <button className="btn btn-icon btn-subtle" onClick={onClose}><X size={18} /></button>
         </div>

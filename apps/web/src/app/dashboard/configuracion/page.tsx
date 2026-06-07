@@ -45,7 +45,7 @@ export default function ConfiguracionPage() {
         <div className="card card-pad">
           <h3 style={{ fontSize: 16, marginBottom: 20 }}>Perfil del negocio</h3>
           {[
-            { label: 'Nombre del restaurante', defaultValue: 'Duble Bistró', type: 'text' },
+            { label: 'Nombre del restaurante', defaultValue: 'Dublé Bistró', type: 'text' },
             { label: 'Teléfono de contacto',   defaultValue: '+52 477 123 4567', type: 'tel'  },
           ].map(f => (
             <div key={f.label} className="row" style={{ borderTop: '1px solid var(--line)', padding: '16px 0', gap: 24, alignItems: 'center' }}>
@@ -97,7 +97,7 @@ export default function ConfiguracionPage() {
             ))}
             <div className="row" style={{ borderTop: '1px solid var(--line)', padding: '16px 0', gap: 24, alignItems: 'flex-start' }}>
               <label style={{ width: 260, fontSize: 14, fontWeight: 500, color: 'var(--ink-2)', flex: 'none', paddingTop: 10 }}>Mensaje de bienvenida</label>
-              <textarea className="textarea" style={{ flex: 1 }} defaultValue="¡Hola! Soy el asistente virtual de Duble Bistró. Puedo ayudarte a hacer, consultar o cancelar tu reservación. ¿En qué puedo ayudarte? 😊" />
+              <textarea className="textarea" style={{ flex: 1 }} defaultValue="¡Hola! Soy el asistente virtual de Dublé Bistró. Puedo ayudarte a hacer, consultar o cancelar tu reservación. ¿En qué puedo ayudarte? 😊" />
             </div>
             <div className="row" style={{ borderTop: '1px solid var(--line)', padding: '16px 0', gap: 24, alignItems: 'center' }}>
               <label style={{ width: 260, fontSize: 14, fontWeight: 500, color: 'var(--ink-2)', flex: 'none' }}>Tomar reservas 24/7</label>

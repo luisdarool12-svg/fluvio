@@ -42,3 +42,4 @@ build/
 packages/database/backups/
 *.backup
 .gstack/
+supabase-repo/

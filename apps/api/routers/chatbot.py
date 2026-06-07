@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import httpx
 import anthropic
 from supabase import create_client
@@ -45,7 +45,7 @@ class GeneratePromptBody(BaseModel):
 
 
 class ParseMenuBody(BaseModel):
-    menu_text: str
+    menu_text: str = Field(..., max_length=20000)
 
 
 # ─── Conversations ────────────────────────────────────────────
@@ -303,7 +303,7 @@ def restore_version(
 
 
 @router.post("/config/generate-prompt")
-def generate_prompt(body: GeneratePromptBody):
+def generate_prompt(body: GeneratePromptBody, business_id: str = Depends(get_business_id)):
     prompt = build_system_prompt(body.form_data)
     return {"system_prompt": prompt, "char_count": len(prompt)}
 

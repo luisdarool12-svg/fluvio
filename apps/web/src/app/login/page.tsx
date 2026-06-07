@@ -8,7 +8,7 @@ import { createClient } from '@/utils/supabase/client'
 export default function LoginPage() {
   const router = useRouter()
   const [mode, setMode] = useState<'login' | 'signup'>('login')
-  const [email, setEmail] = useState('luis@dublebistro.mx')
+  const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -63,7 +63,7 @@ export default function LoginPage() {
               <div style={{ width: 34, height: 34, borderRadius: 99, background: 'var(--accent)', display: 'grid', placeItems: 'center', color: '#fff', fontSize: 13, fontWeight: 700 }}>LD</div>
               <div>
                 <div style={{ fontSize: 13.5, fontWeight: 600, color: '#fff' }}>Luis Duble</div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.5)' }}>Duble Bistró, León Gto.</div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.5)' }}>Dublé Bistró, León Gto.</div>
               </div>
             </div>
           </div>
@@ -95,7 +95,7 @@ export default function LoginPage() {
             {mode === 'signup' && (
               <div className="field">
                 <label>Nombre del restaurante</label>
-                <input className="input" type="text" placeholder="Ej. Duble Bistró" />
+                <input className="input" type="text" placeholder="Ej. Dublé Bistró" />
               </div>
             )}
 

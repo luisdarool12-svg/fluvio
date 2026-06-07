@@ -1,5 +1,5 @@
 -- ============================================================
--- Seed: Duble Bistró Moderne (cliente piloto de Fluvio)
+-- Seed: Dublé Bistró (cliente piloto de Fluvio)
 -- Ejecutar DESPUÉS de 001_initial_schema.sql y 002_bot_additions.sql
 -- ============================================================
 
