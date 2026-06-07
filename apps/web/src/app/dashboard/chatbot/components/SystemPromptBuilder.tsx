@@ -453,14 +453,13 @@ export function SystemPromptBuilder({ businessId }: { businessId: string | null 
                           >{emoji}</button>
                         ))}
                         <button
-                          title="No disponible"
+                          title="Marcar como no disponible"
                           onClick={() => {
                             const nc = [...form.menu_categories]
                             nc[ci].items[ii] = { ...item, available: !item.available }
                             upd('menu_categories', nc)
                           }}
                           style={{ fontSize: 15, background: 'none', border: '1px solid var(--line)', borderRadius: 6, padding: '2px 6px', cursor: 'pointer', opacity: item.available ? 0.35 : 1 }}
-                          title="Marcar como no disponible"
                         >🚫</button>
                         <button className="btn btn-icon btn-subtle btn-sm" onClick={() => {
                           const nc = [...form.menu_categories]
