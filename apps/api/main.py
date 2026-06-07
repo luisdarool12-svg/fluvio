@@ -3,7 +3,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from routers import reservations, customers, tables, chatbot
+from routers import reservations, customers, tables, chatbot, business
 from jobs.noshow import run_nightly_noshow_check
 
 load_dotenv()
@@ -26,6 +26,7 @@ app.include_router(reservations.router, prefix="/reservations", tags=["reservati
 app.include_router(customers.router, prefix="/customers", tags=["customers"])
 app.include_router(tables.router, prefix="/tables", tags=["tables"])
 app.include_router(chatbot.router, prefix="/chatbot", tags=["chatbot"])
+app.include_router(business.router, prefix="/business", tags=["business"])
 
 
 @app.post("/internal/noshow/run")

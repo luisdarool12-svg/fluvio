@@ -15,10 +15,18 @@ export default function LoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!email.trim()) {
+      setError('El email es requerido.')
+      return
+    }
+    if (!pass) {
+      setError('La contraseña es requerida.')
+      return
+    }
     setLoading(true)
     setError('')
     const supabase = createClient()
-    const { error: authError } = await supabase.auth.signInWithPassword({ email, password: pass })
+    const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pass })
     setLoading(false)
     if (authError) {
       setError('Email o contraseña incorrectos. Intenta de nuevo.')

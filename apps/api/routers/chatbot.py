@@ -337,7 +337,7 @@ def parse_menu(body: ParseMenuBody, business_id: str = Depends(get_business_id))
 def get_stats(business_id: str = Depends(get_business_id)):
     db = get_supabase()
 
-    convs = db.table("conversations").select("id, mode, status, created_at").eq("business_id", business_id).execute()
+    convs = db.table("conversations").select("id, mode, created_at").eq("business_id", business_id).execute()
     msgs = db.table("messages").select("id, role, created_at").eq("business_id", business_id).execute()
 
     now = datetime.now(timezone.utc)
@@ -345,9 +345,9 @@ def get_stats(business_id: str = Depends(get_business_id)):
 
     total_convs = len(convs.data)
     month_convs = sum(1 for c in convs.data if c["created_at"] >= month_start)
-    ai_convs = sum(1 for c in convs.data if c["mode"] == "AI")
-    human_convs = sum(1 for c in convs.data if c["mode"] == "HUMAN")
-    escalated = sum(1 for c in convs.data if c["status"] == "escalated")
+    ai_convs = sum(1 for c in convs.data if c.get("mode") == "AI")
+    human_convs = sum(1 for c in convs.data if c.get("mode") == "HUMAN")
+    escalated = 0  # Requires migration 005 (status column)
 
     sent = sum(1 for m in msgs.data if m["role"] in ("assistant", "human"))
     received = sum(1 for m in msgs.data if m["role"] == "user")

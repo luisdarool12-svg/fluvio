@@ -18,13 +18,17 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
 
 export default function ChatbotPage() {
   const [tab, setTab] = useState<Tab>('conversations')
+  // The API resolves business_id from the JWT server-side via DB lookup.
+  // We just need a non-null value here to signal the user is authenticated.
   const [businessId, setBusinessId] = useState<string | null>(null)
 
   useEffect(() => {
     createClient().auth.getSession().then(({ data }) => {
       if (data.session) {
         const payload = JSON.parse(atob(data.session.access_token.split('.')[1]))
-        setBusinessId(payload.business_id ?? null)
+        // Prefer the business_id claim (if Auth Hook is configured), otherwise
+        // fall back to the user's sub so children can proceed with their fetches.
+        setBusinessId(payload.business_id ?? payload.sub ?? null)
       }
     })
   }, [])
