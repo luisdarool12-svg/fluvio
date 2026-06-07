@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from typing import Optional
 from pathlib import Path
 
-from fastapi import FastAPI, Request, HTTPException, Query
+from fastapi import FastAPI, Request, HTTPException, Query, Header, Depends
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from supabase import create_client
@@ -18,6 +18,12 @@ TZ = ZoneInfo("America/Mexico_City")
 app = FastAPI(title="Fluvio WhatsApp Bot")
 
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
+_INTERNAL_SECRET = os.getenv("INTERNAL_JOB_SECRET", "")
+
+
+def _verify_internal(x_internal_secret: str = Header(default="")):
+    if not _INTERNAL_SECRET or x_internal_secret != _INTERNAL_SECRET:
+        raise HTTPException(status_code=401, detail="Secreto interno inválido")
 
 
 # ─── WhatsApp Cloud API webhook (para cuando se migre a Cloud API) ────────────
@@ -45,15 +51,18 @@ async def receive_message(request: Request):
         msg          = value["messages"][0]
         from_number  = msg["from"]
         phone_num_id = value["metadata"]["phone_number_id"]
+        print(f"[webhook] msg from={from_number} phone_num_id={phone_num_id} type={msg['type']}")
         if msg["type"] == "text":
             text = msg["text"]["body"]
+            print(f"[webhook] text={text!r}")
             reply = await asyncio.to_thread(
                 handle_message, phone_num_id, from_number, text
             )
+            print(f"[webhook] reply={reply!r}")
             if reply:
                 await _send_whatsapp_cloud(from_number, reply, phone_num_id)
-    except (KeyError, IndexError):
-        pass
+    except Exception as e:
+        print(f"[webhook] ERROR: {type(e).__name__}: {e}")
     return {"status": "ok"}
 
 
@@ -80,7 +89,7 @@ class BridgeMessage(BaseModel):
 
 
 @app.post("/internal/process")
-async def process_from_bridge(body: BridgeMessage):
+async def process_from_bridge(body: BridgeMessage, _: None = Depends(_verify_internal)):
     reply = await asyncio.to_thread(
         handle_message,
         body.business_phone_number_id,
@@ -95,7 +104,7 @@ async def process_from_bridge(body: BridgeMessage):
 # ─── Outbox: pendientes para enviar vía Baileys ───────────────────────────────
 
 @app.get("/internal/outbox/{business_phone_number_id}")
-def get_outbox(business_phone_number_id: str, limit: int = 20):
+def get_outbox(business_phone_number_id: str, limit: int = 20, _: None = Depends(_verify_internal)):
     business = get_business(business_phone_number_id)
     if not business:
         return {"items": []}
@@ -109,7 +118,7 @@ def get_outbox(business_phone_number_id: str, limit: int = 20):
 
 
 @app.post("/internal/outbox/{item_id}/sent")
-def mark_outbox_sent(item_id: int):
+def mark_outbox_sent(item_id: int, _: None = Depends(_verify_internal)):
     _db().table("outbox").update({"sent": True}).eq("id", item_id).execute()
     return {"ok": True}
 
@@ -117,7 +126,7 @@ def mark_outbox_sent(item_id: int):
 # ─── Recordatorios (2h antes) ────────────────────────────────────────────────
 
 @app.get("/internal/reminders/{business_phone_number_id}")
-def get_pending_reminders(business_phone_number_id: str):
+def get_pending_reminders(business_phone_number_id: str, _: None = Depends(_verify_internal)):
     """
     Retorna reservaciones que deben recibir recordatorio
     entre 90 y 150 minutos antes de su hora.
@@ -154,7 +163,7 @@ def get_pending_reminders(business_phone_number_id: str):
 
 
 @app.post("/internal/reminders/{reservation_id}/sent")
-def mark_reminder_sent(reservation_id: str):
+def mark_reminder_sent(reservation_id: str, _: None = Depends(_verify_internal)):
     _db().table("reservations").update({"reminder_sent": True}).eq("id", reservation_id).execute()
     return {"ok": True}
 
@@ -199,7 +208,7 @@ def get_pending_confirmations(business_phone_number_id: str):
 
 
 @app.post("/internal/confirmations/{reservation_id}/sent")
-def mark_confirmation_sent(reservation_id: str):
+def mark_confirmation_sent(reservation_id: str, _: None = Depends(_verify_internal)):
     _db().table("reservations").update({"confirmation_sent": True}).eq("id", reservation_id).execute()
     return {"ok": True}
 
@@ -212,7 +221,7 @@ class ModeUpdate(BaseModel):
 
 
 @app.post("/internal/mode")
-def update_mode(body: ModeUpdate):
+def update_mode(body: ModeUpdate, _: None = Depends(_verify_internal)):
     if body.mode not in ("AI", "HUMAN"):
         raise HTTPException(status_code=400, detail="mode debe ser AI o HUMAN")
     _db().table("conversations").update({"mode": body.mode}).eq("id", body.conversation_id).execute()
