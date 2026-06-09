@@ -68,7 +68,7 @@ export function ConversationInbox({ businessId }: { businessId: string | null })
       .then(setConvs)
   }, [businessId])
 
-  // Realtime: conversations
+  // Realtime: conversations (Supabase postgres_changes)
   useEffect(() => {
     if (!businessId) return
     const supabase = createClient()
@@ -84,6 +84,15 @@ export function ConversationInbox({ businessId }: { businessId: string | null })
     return () => { supabase.removeChannel(ch) }
   }, [businessId])
 
+  // Polling fallback: refresh conversation list every 10s
+  useEffect(() => {
+    if (!businessId) return
+    const id = setInterval(() => {
+      apiFetch('/chatbot/conversations').then(r => r.json()).then(setConvs)
+    }, 10_000)
+    return () => clearInterval(id)
+  }, [businessId])
+
   // Load messages when conversation selected
   useEffect(() => {
     if (!selected) { setMessages([]); return }
@@ -92,7 +101,7 @@ export function ConversationInbox({ businessId }: { businessId: string | null })
       .then(setMessages)
   }, [selected])
 
-  // Realtime: messages for active conversation
+  // Realtime: messages for active conversation (Supabase postgres_changes)
   useEffect(() => {
     if (!selected) return
     const supabase = createClient()
@@ -106,6 +115,24 @@ export function ConversationInbox({ businessId }: { businessId: string | null })
       })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
+  }, [selected])
+
+  // Polling fallback: refresh messages every 5s for active conversation
+  useEffect(() => {
+    if (!selected) return
+    const id = setInterval(() => {
+      apiFetch(`/chatbot/conversations/${selected.id}/messages`)
+        .then(r => r.json())
+        .then((msgs: Message[]) => {
+          setMessages(prev => {
+            if (msgs.length !== prev.length) return msgs
+            const lastNew = msgs[msgs.length - 1]?.id
+            const lastPrev = prev[prev.length - 1]?.id
+            return lastNew !== lastPrev ? msgs : prev
+          })
+        })
+    }, 5_000)
+    return () => clearInterval(id)
   }, [selected])
 
   // Scroll to bottom on new message

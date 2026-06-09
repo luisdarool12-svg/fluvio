@@ -35,6 +35,22 @@ def _db() -> Client:
 
 _business_cache: dict[str, dict] = {}
 
+# ─── Estado de pausa (en memoria, por business_id) ───────────────────────────
+
+_paused_businesses: set[str] = set()
+
+
+def pause_business(business_id: str) -> None:
+    _paused_businesses.add(business_id)
+
+
+def resume_business(business_id: str) -> None:
+    _paused_businesses.discard(business_id)
+
+
+def is_paused(business_id: str) -> bool:
+    return business_id in _paused_businesses
+
 
 def get_business(phone_number_id: str) -> Optional[dict]:
     if phone_number_id in _business_cache:
@@ -90,9 +106,11 @@ def save_message(db: Client, business_id: str, conv_id: int, role: str, content:
         "role": role,
         "content": content,
     }).execute()
-    db.table("conversations").update({
-        "last_message_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", conv_id).execute()
+    patch: dict = {"last_message_at": datetime.now(timezone.utc).isoformat()}
+    if role == "user":
+        conv = db.table("conversations").select("unread_count").eq("id", conv_id).single().execute()
+        patch["unread_count"] = (conv.data.get("unread_count") or 0) + 1
+    db.table("conversations").update(patch).eq("id", conv_id).execute()
 
 
 def get_recent_history(db: Client, conv_id: int, limit: int = 20) -> list[dict]:
@@ -383,6 +401,10 @@ def handle_message(
         return "Lo sentimos, este número no está configurado. Contáctanos directamente."
 
     business_id: str = business["id"]
+
+    if is_paused(business_id):
+        return ""
+
     db = _db()
 
     conv = get_or_create_conversation(db, business_id, customer_phone, "whatsapp", push_name, jid)

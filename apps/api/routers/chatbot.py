@@ -52,7 +52,6 @@ class ParseMenuBody(BaseModel):
 
 @router.get("/conversations")
 def list_conversations(
-    status: Optional[str] = None,
     mode: Optional[str] = None,
     business_id: str = Depends(get_business_id),
 ):
@@ -63,8 +62,6 @@ def list_conversations(
         .eq("business_id", business_id)
         .order("last_message_at", desc=True, nullsfirst=False)
     )
-    if status:
-        q = q.eq("status", status)
     if mode:
         q = q.eq("mode", mode.upper())
     result = q.execute()
@@ -90,14 +87,15 @@ def get_messages(
 
     msgs = (
         db.table("messages")
-        .select("id, role, content, read, created_at")
+        .select("id, role, content, created_at")
         .eq("conversation_id", conv_id)
         .order("created_at")
         .execute()
     )
-    # Mark incoming messages as read
-    db.table("messages").update({"read": True}).eq("conversation_id", conv_id).eq("role", "user").execute()
+
+    # Mark as read
     db.table("conversations").update({"unread_count": 0}).eq("id", conv_id).execute()
+
     return msgs.data
 
 
@@ -132,7 +130,6 @@ def send_message(
         "conversation_id": conv_id,
         "role": "human",
         "content": body.content,
-        "read": True,
     }).execute()
 
     # Enqueue for sending via WhatsApp
@@ -181,20 +178,21 @@ def set_status(
     body: StatusBody,
     business_id: str = Depends(get_business_id),
 ):
-    if body.status not in ("active", "resolved", "escalated"):
-        raise HTTPException(status_code=400, detail="status inválido")
+    status = body.status.lower()
+    if status not in ("active", "resolved", "escalated"):
+        raise HTTPException(status_code=400, detail="status debe ser active, resolved o escalated")
 
     db = get_supabase()
     result = (
         db.table("conversations")
-        .update({"status": body.status})
+        .update({"status": status})
         .eq("id", conv_id)
         .eq("business_id", business_id)
         .execute()
     )
     if not result.data:
         raise HTTPException(status_code=404, detail="Conversación no encontrada")
-    return {"status": body.status}
+    return {"status": status}
 
 
 # ─── Config ──────────────────────────────────────────────────
@@ -568,14 +566,25 @@ _BOT_URL    = os.environ.get("BOT_INTERNAL_URL", "http://bot:8000")
 
 @router.get("/bot/status")
 async def get_bot_status(business_id: str = Depends(get_business_id)):
+    running = False
+    paused = False
     try:
+        secret = os.environ.get("INTERNAL_JOB_SECRET", "")
         async with httpx.AsyncClient(timeout=3.0) as client:
             r = await client.get(f"{_BOT_URL}/health")
             running = r.status_code == 200
+            if running:
+                rp = await client.get(
+                    f"{_BOT_URL}/internal/bot/paused",
+                    params={"business_id": business_id},
+                    headers={"X-Internal-Secret": secret},
+                )
+                paused = rp.json().get("paused", False) if rp.status_code == 200 else False
     except Exception:
         running = False
     return {
         "running": running,
+        "paused": paused,
         "easypanel_configured": bool(_EP_URL and _EP_TOKEN and _EP_PROJECT),
     }
 
@@ -604,9 +613,33 @@ async def restart_bot(business_id: str = Depends(get_business_id)):
 
 @router.post("/bot/start")
 async def start_bot(business_id: str = Depends(get_business_id)):
-    return await _easypanel("services.startService")
+    secret = os.environ.get("INTERNAL_JOB_SECRET", "")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(
+                f"{_BOT_URL}/internal/bot/resume",
+                json={"business_id": business_id},
+                headers={"X-Internal-Secret": secret},
+            )
+            if r.status_code == 200:
+                return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"No se pudo conectar al bot: {e}")
+    raise HTTPException(status_code=502, detail="El bot no respondió")
 
 
 @router.post("/bot/stop")
 async def stop_bot(business_id: str = Depends(get_business_id)):
-    return await _easypanel("services.stopService")
+    secret = os.environ.get("INTERNAL_JOB_SECRET", "")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(
+                f"{_BOT_URL}/internal/bot/pause",
+                json={"business_id": business_id},
+                headers={"X-Internal-Secret": secret},
+            )
+            if r.status_code == 200:
+                return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"No se pudo conectar al bot: {e}")
+    raise HTTPException(status_code=502, detail="El bot no respondió")

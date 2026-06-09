@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from supabase import create_client
 
-from agent import handle_message, get_business, _db
+from agent import handle_message, get_business, _db, pause_business, resume_business, is_paused, _paused_businesses
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
@@ -102,7 +102,7 @@ async def process_from_bridge(body: BridgeMessage, _: None = Depends(_verify_int
     return {"reply": reply or ""}
 
 
-# ─── Outbox: pendientes para enviar vía Baileys ───────────────────────────────
+# ─── Outbox: pendientes para enviar vía Baileys (legado) ─────────────────────
 
 @app.get("/internal/outbox/{business_phone_number_id}")
 def get_outbox(business_phone_number_id: str, limit: int = 20, _: None = Depends(_verify_internal)):
@@ -122,6 +122,40 @@ def get_outbox(business_phone_number_id: str, limit: int = 20, _: None = Depends
 def mark_outbox_sent(item_id: int, _: None = Depends(_verify_internal)):
     _db().table("outbox").update({"sent": True}).eq("id", item_id).execute()
     return {"ok": True}
+
+
+# ─── Outbox flush: envía pendientes vía WhatsApp Cloud API ───────────────────
+
+@app.post("/internal/outbox/flush")
+async def flush_outbox(_: None = Depends(_verify_internal)):
+    """
+    Lee mensajes pendientes del outbox y los envía via WhatsApp Cloud API.
+    Reemplaza el polling de Baileys para el envío de recordatorios.
+    """
+    db = _db()
+    items = db.table("outbox").select(
+        "id,phone,content,business_id"
+    ).eq("sent", False).eq("platform", "whatsapp").order("created_at").limit(100).execute()
+
+    sent_count = 0
+    error_count = 0
+
+    for item in items.data:
+        biz = db.table("businesses").select("telefono_whatsapp").eq(
+            "id", item["business_id"]
+        ).execute()
+        if not biz.data:
+            continue
+        phone_num_id = biz.data[0]["telefono_whatsapp"]
+        try:
+            await _send_whatsapp_cloud(item["phone"], item["content"], phone_num_id)
+            db.table("outbox").update({"sent": True}).eq("id", item["id"]).execute()
+            sent_count += 1
+        except Exception as e:
+            print(f"[outbox/flush] Error enviando a {item['phone']}: {e}")
+            error_count += 1
+
+    return {"sent": sent_count, "errors": error_count}
 
 
 # ─── Recordatorios (2h antes) ────────────────────────────────────────────────
@@ -229,8 +263,31 @@ def update_mode(body: ModeUpdate, _: None = Depends(_verify_internal)):
     return {"ok": True}
 
 
+# ─── Control de pausa ────────────────────────────────────────────────────────
+
+class PauseBody(BaseModel):
+    business_id: str
+
+
+@app.post("/internal/bot/pause")
+def bot_pause(body: PauseBody, _: None = Depends(_verify_internal)):
+    pause_business(body.business_id)
+    return {"paused": True, "business_id": body.business_id}
+
+
+@app.post("/internal/bot/resume")
+def bot_resume(body: PauseBody, _: None = Depends(_verify_internal)):
+    resume_business(body.business_id)
+    return {"paused": False, "business_id": body.business_id}
+
+
+@app.get("/internal/bot/paused")
+def bot_paused_state(business_id: str, _: None = Depends(_verify_internal)):
+    return {"paused": is_paused(business_id)}
+
+
 # ─── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "paused_count": len(_paused_businesses)}

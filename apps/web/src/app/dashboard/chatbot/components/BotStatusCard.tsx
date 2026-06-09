@@ -19,6 +19,7 @@ type BotAction = 'restart' | 'start' | 'stop'
 
 interface Status {
   running: boolean
+  paused: boolean
   easypanel_configured: boolean
 }
 
@@ -59,8 +60,8 @@ export function BotStatusCard() {
       } else {
         const labels: Record<BotAction, string> = {
           restart: 'Reiniciando…',
-          start: 'Iniciando…',
-          stop: 'Deteniendo…',
+          start: 'Reanudando…',
+          stop: 'Pausando…',
         }
         setActionMsg(labels[action])
         // Re-check status after 4s to reflect the change
@@ -75,16 +76,22 @@ export function BotStatusCard() {
 
   const dot = loading
     ? 'var(--ink-4)'
-    : status?.running
-      ? '#22c55e'
-      : '#ef4444'
+    : !status?.running
+      ? '#ef4444'
+      : status.paused
+        ? '#f59e0b'
+        : '#22c55e'
 
   const label = loading
     ? 'Verificando…'
-    : status?.running
-      ? 'En línea'
-      : 'Detenido'
+    : !status?.running
+      ? 'Detenido'
+      : status.paused
+        ? 'En pausa'
+        : 'En línea'
 
+  // stop/start use internal pause/resume — always available when bot is running
+  const canPauseResume = status?.running ?? false
   const canControl = status?.easypanel_configured ?? false
 
   return (
@@ -130,31 +137,42 @@ export function BotStatusCard() {
           Reiniciar
         </button>
 
-        {/* Start / Stop */}
-        {status?.running ? (
+        {/* Pause / Resume — works without EasyPanel */}
+        {status?.running && !status.paused ? (
           <button
             className="btn btn-ghost btn-sm"
             onClick={() => handleAction('stop')}
-            disabled={!canControl || actionLoading !== null}
-            title="Detener bot"
-            style={{ gap: 5, color: 'var(--status-noshow-ink)', opacity: canControl ? 1 : 0.4 }}
+            disabled={!canPauseResume || actionLoading !== null}
+            title="Pausar bot (deja de responder mensajes)"
+            style={{ gap: 5, color: 'var(--status-noshow-ink)' }}
           >
             {actionLoading === 'stop'
               ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
               : <Square size={13} />}
-            Detener
+            Pausar
+          </button>
+        ) : status?.running && status.paused ? (
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => handleAction('start')}
+            disabled={!canPauseResume || actionLoading !== null}
+            title="Reanudar bot"
+            style={{ gap: 5, color: '#16a34a' }}
+          >
+            {actionLoading === 'start'
+              ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+              : <Power size={13} />}
+            Reanudar
           </button>
         ) : (
           <button
             className="btn btn-ghost btn-sm"
             onClick={() => handleAction('start')}
-            disabled={!canControl || actionLoading !== null}
-            title="Iniciar bot"
-            style={{ gap: 5, color: '#16a34a', opacity: canControl ? 1 : 0.4 }}
+            disabled={!canPauseResume || actionLoading !== null}
+            title="El bot está detenido — reinícialo desde EasyPanel"
+            style={{ gap: 5, color: 'var(--ink-3)', opacity: 0.5, cursor: 'not-allowed' }}
           >
-            {actionLoading === 'start'
-              ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
-              : <Power size={13} />}
+            <Power size={13} />
             Iniciar
           </button>
         )}
