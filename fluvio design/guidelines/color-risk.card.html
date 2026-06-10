@@ -1,0 +1,24 @@
+<!-- @dsCard group="Colors" viewport="700x180" name="No-show risk tiers" subtitle="Crítico · Alto · Medio · Bajo — AI-predicted no-show risk" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body { margin: 0; background: var(--surface); padding: 22px; font-family: var(--font-ui); }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .tier { border-radius: 12px; padding: 14px; border: 1px solid; }
+    .score { font-family: var(--font-display); font-weight: 800; font-size: 24px; line-height: 1; letter-spacing: -.01em; }
+    .name { font-size: 12.5px; font-weight: 600; margin-top: 6px; }
+    .range { font-size: 11px; opacity: .7; margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <div class="grid">
+    <div class="tier" style="background:var(--risk-crit-bg);border-color:var(--risk-crit-bd);color:var(--risk-crit)"><div class="score">92</div><div class="name">Crítico</div><div class="range">81 – 100</div></div>
+    <div class="tier" style="background:var(--risk-high-bg);border-color:var(--risk-high-bd);color:var(--risk-high)"><div class="score">73</div><div class="name">Alto</div><div class="range">61 – 80</div></div>
+    <div class="tier" style="background:var(--risk-med-bg);border-color:var(--risk-med-bd);color:var(--risk-med)"><div class="score">48</div><div class="name">Medio</div><div class="range">31 – 60</div></div>
+    <div class="tier" style="background:var(--risk-low-bg);border-color:var(--risk-low-bd);color:var(--risk-low)"><div class="score">14</div><div class="name">Bajo</div><div class="range">0 – 30</div></div>
+  </div>
+</body>
+</html>

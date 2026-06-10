@@ -1,0 +1,80 @@
+/* ============================================================
+   FLUVIO — Color tokens
+   5-color system: Violet · Coral · Plum · Margen · Niebla
+   Brief: never pure black, never pure blue primary, no UI gradients.
+   ============================================================ */
+
+:root {
+  /* ---- Brand: Fluvio Violet (primary) ---- */
+  --violet: #6447F5;          /* primary buttons-secondary, active nav, links, focus, brand */
+  --violet-ink: #5235E0;      /* hover / pressed violet, links on light */
+  --violet-med: #9B8CF8;      /* logo middle wave, medium violet */
+  --violet-icon: #A08FF8;     /* active nav icon on dark sidebar */
+  --violet-light: #EDE9FE;    /* badge backgrounds, avatar fills */
+  --violet-dark: #5B21B6;     /* avatar initials, pendiente badge text */
+
+  /* ---- Accent: Corriente / Coral (action) ---- */
+  --coral: #FF6A38;           /* primary CTA, alerts, upgrade, third logo wave */
+  --coral-ink: #EC5524;       /* coral hover / pressed */
+  --coral-light: #FFEDD5;     /* warning badge backgrounds */
+  --coral-dark: #C2410C;      /* coral text, danger text */
+
+  /* ---- Dark: Fondo / Deep Plum ---- */
+  --plum: #180F2E;            /* sidebar bg, primary text, dark cards */
+  --plum-soft: #241838;       /* raised dark surfaces on plum */
+
+  /* ---- Surfaces (warm / violet-tinted) ---- */
+  --bg: #FAF9F5;              /* Margen — main content background */
+  --surface: #FFFFFF;         /* cards, panels, inputs */
+  --surface-2: #F3F1FA;       /* row hover, chips, soft fills */
+  --surface-3: #ECE9F4;       /* progress tracks, sunken */
+
+  /* ---- Ink (text) ---- */
+  --ink: #180F2E;             /* primary text + headings (Plum) */
+  --ink-2: #4E4566;           /* secondary readable text */
+  --ink-3: #9487B0;           /* Niebla — labels, captions, placeholders */
+  --ink-4: #B7ADCB;           /* faint / disabled / muted icons */
+  --ink-on-violet: #FFFFFF;
+  --ink-on-coral: #FFFFFF;
+
+  /* ---- Lines ---- */
+  --line: #EAE6F2;            /* all borders + dividers */
+  --line-2: #DFD9EC;          /* input borders */
+  --line-strong: #CEC6E0;     /* hover borders, switch-off track */
+
+  /* ---- Reservation status badges ---- */
+  --st-pend: #5B21B6;  --st-pend-bg: #EDE9FE;  --st-pend-dot: #6447F5;   /* Pendiente */
+  --st-conf: #15803D;  --st-conf-bg: #DCFCE7;  --st-conf-dot: #16A34A;   /* Confirmada */
+  --st-seat: #1D4ED8;  --st-seat-bg: #EFF4FF;  --st-seat-dot: #2563EB;   /* Sentada */
+  --st-no:   #6B7280;  --st-no-bg:   #F3F3F1;  --st-no-dot:   #9CA3AF;   /* No-show */
+  --st-canc: #9CA3AF;  --st-canc-bg: #F3F3F1;  --st-canc-dot: #C2C6CE;   /* Cancelada */
+
+  /* ---- No-show risk tiers ---- */
+  --risk-crit:  #C2410C; --risk-crit-bg:  #FFE6D6; --risk-crit-bd: #FBC9AE;  /* 81–100 */
+  --risk-high:  #C2410C; --risk-high-bg:  #FFF4EC; --risk-high-bd: #FFE0CC;  /* 61–80 */
+  --risk-med:   #5B21B6; --risk-med-bg:   #EDE9FE; --risk-med-bd:  #DCD3FB;  /* 31–60 */
+  --risk-low:   #9487B0; --risk-low-bg:   #FAF9F5; --risk-low-bd:  #EAE6F2;  /* 0–30 */
+
+  /* ---- Semantic deltas ---- */
+  --pos: #16A34A;            /* positive change (green-600) */
+  --neg: #C2410C;            /* negative / improved (coral) */
+  --danger: #C2410C;
+  --danger-bg: #FFEDD5;
+  --danger-bd: #FBD3B8;
+
+  /* ---- WhatsApp brand (bot / chat surfaces) ---- */
+  --wa-green: #25D366;
+  --wa-header: #075E54;
+  --wa-out: #DCF8C6;
+  --wa-bg: #E5DDD5;
+
+  /* ---- Dark sidebar palette ---- */
+  --sb-bg: #180F2E;
+  --sb-label: rgba(255,255,255,.30);
+  --sb-text: rgba(255,255,255,.55);
+  --sb-text-hover: rgba(255,255,255,.82);
+  --sb-hover-bg: rgba(255,255,255,.05);
+  --sb-active-bg: rgba(100,71,245,.22);
+  --sb-active-text: #FFFFFF;
+  --sb-divider: rgba(255,255,255,.08);
+}

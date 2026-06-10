@@ -1,11 +1,15 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Plus, Sun, Utensils, Armchair, X, PenLine, Save, LayoutGrid, MapPin } from 'lucide-react'
+import { Plus, Sun, Utensils, Armchair, X, PenLine, Save, LayoutGrid, MapPin, Settings2 } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { Toast } from '@/components/Toast'
-import type { Table, TableZone, TableTipo, ZoneArea, Wall, FurnitureItem, FloorPlanConfig } from '@/lib/data'
+import type { Table, TableZone, TableTipo, ZoneArea, Wall, FurnitureItem, FloorPlanConfig, TablePosOverride } from '@/lib/data'
 import { toTable } from '@/lib/transform'
 import { createClient } from '@/utils/supabase/client'
+import { apiFetch } from '@/lib/api'
+import { OcupacionIndicator } from './components/OcupacionIndicator'
+import { MesaEditModal } from './components/MesaEditModal'
+import { FloorPlanOverrideBar, type OverrideInfo } from './components/FloorPlanOverrideBar'
 
 const ZONE_ICON: Record<TableZone, React.ReactNode> = {
   Terraza:  <Sun size={20} />,
@@ -14,20 +18,26 @@ const ZONE_ICON: Record<TableZone, React.ReactNode> = {
 }
 const ZONAS_LIST: TableZone[] = ['Terraza', 'Interior', 'Barra']
 
-type Ocup = 'libre' | 'proxima' | 'ocupada'
+type Ocup = 'libre' | 'proxima' | 'ocupada' | 'combinada'
 type VisualState = Ocup | 'inactiva'
 
 const OCUP_LABEL: Record<Ocup, string> = {
-  libre: 'Libre', proxima: 'Próxima', ocupada: 'Ocupada',
+  libre: 'Libre', proxima: 'Próxima', ocupada: 'Ocupada', combinada: 'Combinada',
 }
 const VISUAL_COLOR: Record<VisualState, string> = {
-  libre: '#22c55e', proxima: '#f59e0b', ocupada: '#ef4444', inactiva: '#d1d5db',
+  libre: '#22c55e', proxima: '#f59e0b', ocupada: '#ef4444', combinada: '#8b5cf6', inactiva: '#d1d5db',
 }
 const VISUAL_LABEL: Record<VisualState, string> = {
-  libre: 'Libre', proxima: 'Próxima (≤30 min)', ocupada: 'Ocupada', inactiva: 'Inactiva',
+  libre: 'Libre', proxima: 'Próxima (≤30 min)', ocupada: 'Ocupada', combinada: 'Combinada (grupo)', inactiva: 'Inactiva',
 }
 
-type OcupEntry = { estado: string; nombre: string; fecha_hora: string; personas: number }
+type OcupEntry = { estado: string; nombre: string; fecha_hora: string; personas: number; combinada?: boolean }
+
+const EMPTY_FP: FloorPlanConfig = { zones: [], walls: [], furniture: [] }
+
+function tablePositions(mesas: Table[]): TablePosOverride[] {
+  return mesas.map(m => ({ id: m.id, posX: m.posX, posY: m.posY, rotation: m.rotation }))
+}
 
 // ── Formas OpenTable ──────────────────────────────────────────────────────────
 type Variant = 'round' | 'rect' | 'double' | 'triple'
@@ -112,6 +122,11 @@ export default function MesasPage() {
   const [furnitureForm, setFurnitureForm]     = useState({ tipo: 'sofa' as FurnitureItem['tipo'], label: '', w: 30, h: 8 })
   const [tooltip, setTooltip]                 = useState<{ id: string } | null>(null)
   const [seatPersonas, setSeatPersonas]       = useState(2)
+  const [fpOverride, setFpOverride]           = useState<OverrideInfo | null>(null)
+  const [fpBusy, setFpBusy]                   = useState(false)
+  const [editarBase, setEditarBase]           = useState(false)
+  const [editMesa, setEditMesa]               = useState<Table | null>(null)
+  const [ocupVersion, setOcupVersion]         = useState(0)
 
   const canvasRef  = useRef<HTMLDivElement>(null)
   const dragging   = useRef<{ id: string } | null>(null)
@@ -137,7 +152,7 @@ export default function MesasPage() {
     const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1)
     const { data } = await supabase
       .from('reservations')
-      .select('table_id, estado, fecha_hora, personas, customers(nombre)')
+      .select('table_id, mesas_combinadas, estado, fecha_hora, personas, customers(nombre)')
       .gte('fecha_hora', today.toISOString())
       .lt('fecha_hora', tomorrow.toISOString())
       .neq('estado', 'cancelada')
@@ -146,27 +161,64 @@ export default function MesasPage() {
     const map = new Map<string, OcupEntry>()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     data.forEach((r: any) => {
-      if (!r.table_id) return
-      const existing = map.get(r.table_id)
-      if (!existing || r.estado === 'sentada') {
-        map.set(r.table_id, { estado: r.estado, nombre: r.customers?.nombre ?? '—', fecha_hora: r.fecha_hora, personas: r.personas })
+      // Una reserva con combinación bloquea todas sus mesas
+      const ids: string[] = r.table_id ? [r.table_id] : []
+      for (const tid of (r.mesas_combinadas ?? []) as string[]) {
+        if (!ids.includes(tid)) ids.push(tid)
       }
+      const esCombinada = ids.length > 1
+      ids.forEach(tid => {
+        const existing = map.get(tid)
+        if (!existing || r.estado === 'sentada') {
+          map.set(tid, { estado: r.estado, nombre: r.customers?.nombre ?? '—', fecha_hora: r.fecha_hora, personas: r.personas, combinada: esCombinada })
+        }
+      })
     })
     setOcupMap(map)
+    setOcupVersion(v => v + 1)
+  }, [])
+
+  const loadFloorPlan = useCallback(async (supabase: ReturnType<typeof createClient>, mesasDb: Table[]) => {
+    // Plano base desde Supabase; override vigente desde el API
+    const { data: fpRow } = await supabase.from('floor_plan_config').select('config').single()
+    const baseConfig = (fpRow?.config as FloorPlanConfig | undefined) ?? EMPTY_FP
+
+    try {
+      const r = await apiFetch('/tables/floor-plan/current')
+      if (r.ok) {
+        const current = await r.json()
+        if (current.source === 'override') {
+          const cfg = current.config as FloorPlanConfig
+          setFpOverride(current.override as OverrideInfo)
+          setFpConfig({ zones: cfg.zones ?? [], walls: cfg.walls ?? [], furniture: cfg.furniture ?? [] })
+          const pos = new Map((cfg.tables ?? []).map(t => [t.id, t]))
+          setMesas(mesasDb.map(m => {
+            const p = pos.get(m.id)
+            return p ? { ...m, posX: p.posX, posY: p.posY, rotation: p.rotation } : m
+          }))
+          return
+        }
+      }
+    } catch {
+      // Si el API no responde, se muestra el plano base
+    }
+    setFpOverride(null)
+    setFpConfig(baseConfig)
+    setMesas(mesasDb)
   }, [])
 
   useEffect(() => {
     const supabase = createClient()
     async function load() {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('editarBase') === '1') { setEditarBase(true); setView('croquis') }
+
       const { data: userRow } = await supabase.from('users').select('rol, business_id').single()
       setIsOwner(userRow?.rol === 'owner')
       if (userRow?.business_id) setBusinessId(userRow.business_id)
 
       const { data } = await supabase.from('tables').select('*').order('nombre')
-      if (data) setMesas(data.map(toTable))
-
-      const { data: fpRow } = await supabase.from('floor_plan_config').select('config').single()
-      if (fpRow?.config) setFpConfig(fpRow.config as FloorPlanConfig)
+      await loadFloorPlan(supabase, data ? data.map(toTable) : [])
 
       await loadOcupacion(supabase)
     }
@@ -175,16 +227,21 @@ export default function MesasPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, () => loadOcupacion(supabase))
       .subscribe()
     return () => { supabase.removeChannel(ch) }
-  }, [loadOcupacion])
+  }, [loadOcupacion, loadFloorPlan])
 
   function getOcup(mesa: Table): Ocup {
     if (mesa.ocupadoManual) return 'ocupada'
     const r = ocupMap.get(mesa.id)
     if (!r) return 'libre'
-    if (r.estado === 'sentada') return 'ocupada'
-    const min = (new Date(r.fecha_hora).getTime() - Date.now()) / 60000
-    if (min <= 30 && min >= -30) return 'proxima'
-    return 'libre'
+    let base: Ocup = 'libre'
+    if (r.estado === 'sentada') {
+      base = 'ocupada'
+    } else {
+      const min = (new Date(r.fecha_hora).getTime() - Date.now()) / 60000
+      if (min <= 30 && min >= -30) base = 'proxima'
+    }
+    if (base !== 'libre' && r.combinada) return 'combinada'
+    return base
   }
 
   function getVisual(mesa: Table): VisualState {
@@ -260,6 +317,22 @@ export default function MesasPage() {
   }
 
   async function savePositions() {
+    // Con layout temporal activo, el editor guarda en el override — nunca
+    // toca tables.pos_x ni floor_plan_config (el plano base queda intacto).
+    if (fpOverride) {
+      setSavingPos(true)
+      const config = { ...fpConfig, tables: tablePositions(mesas) }
+      const r = await apiFetch('/tables/floor-plan/override/active', {
+        method: 'PATCH',
+        body: JSON.stringify({ config }),
+      })
+      setSavingPos(false)
+      if (!r.ok) { showToast('Error al guardar el layout temporal', 'error'); return }
+      exitEditMode()
+      showToast('Layout temporal guardado')
+      return
+    }
+
     if (!businessId) { showToast('Sin business_id', 'error'); return }
     setSavingPos(true)
     const supabase = createClient()
@@ -279,6 +352,45 @@ export default function MesasPage() {
     }
     exitEditMode()
     showToast('Croquis guardado correctamente')
+  }
+
+  // ── Layout temporal (floor plan override) ─────────────────────────────────
+  async function activarModoTemporal(horas: number, motivo: string) {
+    setFpBusy(true)
+    const config = { ...fpConfig, tables: tablePositions(mesas) }
+    const validUntil = new Date(Date.now() + horas * 3_600_000).toISOString()
+    const r = await apiFetch('/tables/floor-plan/override', {
+      method: 'POST',
+      body: JSON.stringify({ config, valid_until: validUntil, motivo: motivo || null }),
+    })
+    setFpBusy(false)
+    if (r.status === 409) { showToast('Ya hay un layout temporal activo o programado', 'error'); return }
+    if (!r.ok) { showToast('Error al activar el modo temporal', 'error'); return }
+    const row = await r.json()
+    setFpOverride({ id: row.id, valid_from: row.valid_from, valid_until: row.valid_until, motivo: row.motivo })
+    setView('croquis')
+    setEditMode(true)
+    showToast('Modo temporal activado — arrastra libremente')
+  }
+
+  async function revertirModoTemporal() {
+    setFpBusy(true)
+    const r = await apiFetch('/tables/floor-plan/override/active', { method: 'DELETE' })
+    if (!r.ok && r.status !== 404) {
+      setFpBusy(false)
+      showToast('Error al revertir el layout temporal', 'error')
+      return
+    }
+    setFpOverride(null)
+    exitEditMode()
+    // Restaurar el plano base con las posiciones reales de la BD
+    const supabase = createClient()
+    const { data } = await supabase.from('tables').select('*').order('nombre')
+    if (data) setMesas(data.map(toTable))
+    const { data: fpRow } = await supabase.from('floor_plan_config').select('config').single()
+    setFpConfig((fpRow?.config as FloorPlanConfig | undefined) ?? EMPTY_FP)
+    setFpBusy(false)
+    showToast('Layout base restaurado')
   }
 
   async function seatManual(id: string, personas: number) {
@@ -370,9 +482,17 @@ export default function MesasPage() {
                 <MapPin size={14} style={{ marginRight: 4 }} />Croquis
               </button>
             </div>
-            {view === 'croquis' && isOwner && !editMode && (
+            {view === 'croquis' && isOwner && !editMode && !fpOverride && (
+              <FloorPlanOverrideBar
+                override={null} isOwner={isOwner} busy={fpBusy}
+                onActivate={activarModoTemporal} onRevert={revertirModoTemporal}
+              />
+            )}
+            {/* El plano base solo se edita entrando desde Configuración
+                (?editarBase=1); con layout temporal activo se edita el override. */}
+            {view === 'croquis' && isOwner && !editMode && (fpOverride || editarBase) && (
               <button className="btn btn-soft" onClick={() => setEditMode(true)}>
-                <PenLine size={15} />Editar
+                <PenLine size={15} />{fpOverride ? 'Editar layout temporal' : 'Editar plano base'}
               </button>
             )}
             {view === 'croquis' && editMode && (
@@ -395,6 +515,19 @@ export default function MesasPage() {
           </div>
         }
       />
+
+      {/* Banner de layout temporal activo (visible en ambas vistas) */}
+      {fpOverride && (
+        <FloorPlanOverrideBar
+          override={fpOverride} isOwner={isOwner} busy={fpBusy}
+          onActivate={activarModoTemporal} onRevert={revertirModoTemporal}
+        />
+      )}
+
+      {/* % de ocupación del restaurante en este momento */}
+      <div style={{ marginBottom: 16 }}>
+        <OcupacionIndicator refreshKey={ocupVersion} />
+      </div>
 
       {/* ── VISTA LISTA ───────────────────────────────────────────────────── */}
       {view === 'lista' && (
@@ -424,7 +557,13 @@ export default function MesasPage() {
                     }}>
                       {ZONE_ICON[mesa.zone as TableZone]}
                     </div>
-                    <div className={`switch ${mesa.active ? 'on' : ''}`} onClick={() => toggle(mesa.id)} role="switch" aria-checked={mesa.active} />
+                    <div className="row gap-8" style={{ alignItems: 'center' }}>
+                      <button className="btn btn-icon btn-subtle btn-sm" onClick={() => setEditMesa(mesa)}
+                        title="Editar estancia y combinaciones" aria-label={`Editar parámetros de ${mesa.name}`}>
+                        <Settings2 size={14} />
+                      </button>
+                      <div className={`switch ${mesa.active ? 'on' : ''}`} onClick={() => toggle(mesa.id)} role="switch" aria-checked={mesa.active} />
+                    </div>
                   </div>
                   <div className="display" style={{ fontWeight: 700, fontSize: 17, letterSpacing: '-0.02em', marginBottom: 2 }}>{mesa.name}</div>
                   <div className="muted" style={{ fontSize: 13.5, marginBottom: 14 }}>
@@ -436,7 +575,10 @@ export default function MesasPage() {
                     </div>
                   )}
                   <div className="row" style={{ justifyContent: 'space-between', paddingTop: 12, borderTop: '1px solid var(--line)' }}>
-                    <span className="faint" style={{ fontSize: 13 }}>{mesa.cap} pers.</span>
+                    <span className="faint" style={{ fontSize: 13 }}>
+                      {mesa.cap} pers. · {mesa.estanciaMin} min
+                      {mesa.combinableCon.length > 0 ? ` · combina con ${mesa.combinableCon.length}` : ''}
+                    </span>
                     {mesa.active ? (
                       <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 600, color, background: `${color}18`, borderRadius: 99, padding: '3px 9px' }}>
                         <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block' }} />
@@ -952,6 +1094,20 @@ export default function MesasPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Modal: estancia y combinaciones de una mesa ───────────────────── */}
+      {editMesa && (
+        <MesaEditModal
+          mesa={editMesa}
+          todas={mesas}
+          onClose={() => setEditMesa(null)}
+          onSaved={patch => {
+            setMesas(prev => prev.map(t => t.id === editMesa.id ? { ...t, ...patch } : t))
+            setEditMesa(null)
+            showToast(`${editMesa.name} actualizada`)
+          }}
+        />
       )}
 
       {toast && <Toast message={toast.msg} type={toast.type} />}

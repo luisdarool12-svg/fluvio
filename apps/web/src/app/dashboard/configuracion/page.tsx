@@ -181,6 +181,25 @@ export default function ConfiguracionPage() {
         </div>
       )}
 
+      {/* Plano base del salón: única entrada para editarlo (en Mesas las
+          posiciones son fijas salvo que haya un layout temporal activo) */}
+      {tab === 'perfil' && (
+        <div className="card card-pad" style={{ marginTop: 14 }}>
+          <div className="row" style={{ gap: 24, alignItems: 'center' }}>
+            <div style={{ flex: 1 }}>
+              <h3 style={{ fontSize: 16, marginBottom: 4 }}>Plano del salón</h3>
+              <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+                Posiciones base de mesas, zonas, paredes y mobiliario. Para reacomodos
+                puntuales usa el modo temporal en la página de Mesas.
+              </p>
+            </div>
+            <a className="btn btn-soft" href="/dashboard/mesas?editarBase=1" style={{ flex: 'none' }}>
+              Editar plano base
+            </a>
+          </div>
+        </div>
+      )}
+
       {tab === 'whatsapp' && (
         <div className="col gap-14">
           <div style={{ background: 'var(--st-conf-bg)', border: '1px solid var(--st-conf-dot)', borderRadius: 'var(--r)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12 }}>

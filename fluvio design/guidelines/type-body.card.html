@@ -1,0 +1,26 @@
+<!-- @dsCard group="Type" viewport="700x250" name="Body & UI — Outfit" subtitle="Body, labels, nav, table data. Weights 300 / 400 / 500." -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body { margin: 0; background: var(--surface); padding: 24px; font-family: var(--font-ui); color: var(--ink); }
+    .stack { display: flex; flex-direction: column; gap: 15px; }
+    .line { display: flex; align-items: baseline; gap: 14px; }
+    .meta { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); width: 130px; flex: none; }
+    .body { font-weight: 400; font-size: 14.5px; }
+    .medium { font-weight: 500; font-size: 13px; }
+    .label { font-weight: 500; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+    .light { font-weight: 300; font-size: 15px; color: var(--ink-2); }
+  </style>
+</head>
+<body>
+  <div class="stack">
+    <div class="line"><span class="meta">Body · 400 · 14.5</span><span class="body">Tienes 10 reservas para hoy y 3 pendientes por confirmar.</span></div>
+    <div class="line"><span class="meta">Nav · 500 · 13</span><span class="medium">Reservaciones</span></div>
+    <div class="line"><span class="meta">Label · 500 · 11</span><span class="label">Reservas hoy</span></div>
+    <div class="line"><span class="meta">Light · 300 · 15</span><span class="light">El bot responde 24/7 por WhatsApp.</span></div>
+  </div>
+</body>
+</html>

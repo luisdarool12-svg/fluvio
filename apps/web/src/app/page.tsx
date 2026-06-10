@@ -106,8 +106,8 @@ export default function LandingPage() {
             <div style={{ background: '#fff', borderRadius: 30, overflow: 'hidden', minHeight: 540 }}>
               {/* Header WhatsApp */}
               <div style={{ background: '#075E54', padding: '38px 14px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 38, height: 38, borderRadius: 99, background: 'var(--accent)', display: 'grid', placeItems: 'center', flex: 'none' }}>
-                  <Logo size={22} />
+                <div style={{ width: 38, height: 38, borderRadius: 99, background: 'var(--violet)', display: 'grid', placeItems: 'center', flex: 'none' }}>
+                  <Logo size={22} variant="mono" />
                 </div>
                 <div>
                   <div style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>Dublé Bistró</div>

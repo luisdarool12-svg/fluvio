@@ -43,3 +43,12 @@ packages/database/backups/
 *.backup
 .gstack/
 supabase-repo/
+
+# Claude Code internals (no necesarios para colaboradores)
+.claude/_ds_bundle.js
+.claude/_ds_manifest.json
+.claude/assets/
+.claude/SKILL.md
+
+# TypeScript build info (artefacto local)
+*.tsbuildinfo

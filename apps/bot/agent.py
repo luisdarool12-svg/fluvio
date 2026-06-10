@@ -7,6 +7,7 @@ from typing import Optional
 from pathlib import Path
 
 import anthropic
+import httpx
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -17,6 +18,10 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 TZ = ZoneInfo("America/Mexico_City")
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+
+# API interno (motor de disponibilidad de mesas)
+API_URL = os.getenv("API_URL", "http://localhost:8000")
+_AVAILABILITY_TIMEOUT_S = 5.0
 
 # ─── Clientes ────────────────────────────────────────────────────────────────
 
@@ -162,31 +167,122 @@ def _fecha_to_date(fecha: str) -> Optional[date]:
         return None
 
 
+def _reserva_datetime(fecha: str, hora: str) -> Optional[datetime]:
+    """DD/MM/YYYY + HH:MM → datetime tz-aware en Mexico City."""
+    d = _fecha_to_date(fecha)
+    if d is None:
+        return None
+    try:
+        hh, mm = hora.split(":")
+        return datetime(d.year, d.month, d.day, int(hh), int(mm), tzinfo=TZ)
+    except (ValueError, AttributeError):
+        return None
+
+
 def save_reservation(
     db: Client, business_id: str, conv_id: int,
     phone: str, reserva: dict, jid: Optional[str] = None,
+    table_id: Optional[str] = None,
+    mesas_combinadas: Optional[list] = None,
 ) -> None:
     customer_id = upsert_customer(db, business_id, phone, reserva["nombre"], jid)
-    d = _fecha_to_date(reserva["fecha"])
-    if d is None:
-        print(f"[agent] Fecha inválida: {reserva['fecha']}")
+    fecha_hora = _reserva_datetime(reserva["fecha"], reserva["hora"])
+    if fecha_hora is None:
+        print(f"[agent] Fecha/hora inválida: {reserva.get('fecha')} {reserva.get('hora')}")
         return
-    hh, mm = reserva["hora"].split(":")
-    fecha_hora = datetime(
-        d.year, d.month, d.day, int(hh), int(mm), tzinfo=TZ
-    ).isoformat()
 
-    db.table("reservations").insert({
+    row: dict = {
         "business_id":  business_id,
         "customer_id":  customer_id,
-        "fecha_hora":   fecha_hora,
+        "fecha_hora":   fecha_hora.isoformat(),
         "personas":     reserva["personas"],
         "estado":       "pendiente",
         "canal":        "whatsapp",
         "zona":         reserva.get("zona"),
         "requisicion":  reserva.get("requisicion"),
         "notas":        reserva.get("requisicion"),
-    }).execute()
+    }
+    if table_id:
+        row["table_id"] = table_id
+    if mesas_combinadas:
+        row["mesas_combinadas"] = mesas_combinadas
+
+    db.table("reservations").insert(row).execute()
+
+
+# ─── Disponibilidad de mesas (vía API interno) ───────────────────────────────
+# El motor vive en apps/api/modules/reservations/availability.py; el bot lo
+# consulta por HTTP porque api y bot se despliegan en contenedores separados.
+
+def consultar_disponibilidad_api(
+    business_id: str, personas: int, fecha_hora: datetime, duracion_min: int = 90,
+) -> Optional[dict]:
+    """
+    Consulta el motor de disponibilidad. Devuelve None si el API no responde
+    (fail-open: ante una falla técnica la reserva se acepta sin mesa asignada,
+    como antes de existir el motor — nunca se rechaza a un cliente por un error
+    de infraestructura).
+    """
+    try:
+        resp = httpx.post(
+            f"{API_URL}/internal/availability",
+            json={
+                "business_id": business_id,
+                "personas": personas,
+                "fecha_hora": fecha_hora.isoformat(),
+                "duracion_min": duracion_min,
+            },
+            headers={"X-Internal-Secret": os.getenv("INTERNAL_JOB_SECRET", "")},
+            timeout=_AVAILABILITY_TIMEOUT_S,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"[agent] No se pudo verificar disponibilidad: {e}")
+        return None
+
+
+def _hora_local(iso_dt: str) -> str:
+    """ISO datetime → 'HH:MM' en hora de Mexico City."""
+    return datetime.fromisoformat(iso_dt).astimezone(TZ).strftime("%H:%M")
+
+
+def _disponibilidad_tool_result(business_id: str, tinput: dict) -> str:
+    """Texto de tool_result para la tool consultar_disponibilidad."""
+    fecha = tinput.get("fecha", "")
+    hora = tinput.get("hora", "")
+    personas = tinput.get("personas", 2)
+
+    fecha_hora = _reserva_datetime(fecha, hora)
+    if fecha_hora is None:
+        return "ERROR: Formato de fecha u hora inválido. Pide al cliente fecha (DD/MM/YYYY) y hora (HH:MM) nuevamente."
+
+    disp = consultar_disponibilidad_api(business_id, personas, fecha_hora)
+    if disp is None or disp.get("sin_mesas_configuradas"):
+        return (
+            "AVISO: No fue posible verificar la disponibilidad en este momento. "
+            "Continúa con la reservación normalmente."
+        )
+
+    if not disp.get("restaurante_lleno"):
+        combinadas = disp.get("mesas_combinadas") or []
+        extra = " (se unirán dos mesas para el grupo)" if combinadas else ""
+        return (
+            f"DISPONIBLE: Sí hay mesa para {personas} persona(s) el {fecha} "
+            f"a las {hora}{extra}. Puedes continuar con la reservación."
+        )
+
+    proxima = disp.get("proxima_disponibilidad")
+    if proxima:
+        return (
+            f"LLENO: No hay mesa para {personas} persona(s) el {fecha} a las {hora}. "
+            f"La próxima disponibilidad ese día es a las {_hora_local(proxima)}. "
+            "Ofrece esa hora al cliente como alternativa."
+        )
+    return (
+        f"LLENO: No hay mesa para {personas} persona(s) el {fecha} a las {hora} "
+        "ni en las horas siguientes. Sugiere al cliente otra fecha."
+    )
 
 
 def _find_reservation(db: Client, business_id: str, phone: str, fecha: str, hora: str) -> Optional[dict]:
@@ -284,10 +380,31 @@ def validate_reservation(reserva: dict) -> str:
 
 TOOLS = [
     {
+        "name": "consultar_disponibilidad",
+        "description": (
+            "Consulta si hay mesa disponible para una fecha, hora y número de personas. "
+            "Úsala cuando el cliente pregunte por disponibilidad, o antes de confirmar "
+            "una reservación si ya tienes fecha, hora y personas. Si el restaurante está "
+            "lleno, la respuesta incluye la próxima hora disponible para ofrecérsela al "
+            "cliente (ej. 'Las 20:00 está lleno, tenemos a las 21:00')."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fecha":    {"type": "string",  "description": "Fecha en formato DD/MM/YYYY"},
+                "hora":     {"type": "string",  "description": "Hora en formato HH:MM (24 horas)"},
+                "personas": {"type": "integer", "description": "Número de personas"},
+            },
+            "required": ["fecha", "hora", "personas"],
+        },
+    },
+    {
         "name": "confirmar_reservacion",
         "description": (
             "Llama a esta función ÚNICAMENTE cuando tengas los 4 datos obligatorios: "
-            "nombre completo, fecha, hora y número de personas. Registra la reservación."
+            "nombre completo, fecha, hora y número de personas. Registra la reservación. "
+            "El sistema verifica la disponibilidad automáticamente: si no hay mesa, "
+            "recibirás la próxima hora disponible para ofrecerla al cliente."
         ),
         "input_schema": {
             "type": "object",
@@ -485,15 +602,55 @@ def handle_message(
         tname  = tool_block.name
         tinput = tool_block.input
 
-        if tname == "confirmar_reservacion":
-            tool_resp = validate_reservation(tinput)
+        if tname == "consultar_disponibilidad":
+            tool_resp = _disponibilidad_tool_result(business_id, tinput)
             reply = _second_turn(client, system, messages, response.content, tool_block.id, tool_resp)
+
+        elif tname == "confirmar_reservacion":
+            tool_resp = validate_reservation(tinput)
+
             if not tool_resp.startswith("ERROR"):
-                try:
-                    tinput["telefono"] = customer_phone
-                    save_reservation(db, business_id, conv["id"], customer_phone, tinput, jid)
-                except Exception as e:
-                    print(f"[agent] Error guardando reservación: {e}")
+                # Motor de disponibilidad: rechazar si está lleno, asignar mesa si hay
+                table_id: Optional[str] = None
+                mesas_combinadas: Optional[list] = None
+                fecha_hora = _reserva_datetime(tinput["fecha"], tinput["hora"])
+                disp = consultar_disponibilidad_api(
+                    business_id, tinput["personas"], fecha_hora
+                ) if fecha_hora else None
+
+                if disp and disp.get("restaurante_lleno"):
+                    proxima = disp.get("proxima_disponibilidad")
+                    if proxima:
+                        tool_resp = (
+                            f"ERROR: No hay mesas disponibles el {tinput['fecha']} a las "
+                            f"{tinput['hora']} para {tinput['personas']} persona(s). "
+                            f"La próxima disponibilidad ese día es a las {_hora_local(proxima)}. "
+                            "Informa al cliente y ofrécele esa hora como alternativa."
+                        )
+                    else:
+                        tool_resp = (
+                            f"ERROR: No hay mesas disponibles el {tinput['fecha']} a las "
+                            f"{tinput['hora']} para {tinput['personas']} persona(s), ni en las "
+                            "horas siguientes. Informa al cliente e invítalo a elegir otra fecha."
+                        )
+                else:
+                    if disp:
+                        table_id = disp.get("mesa_id")
+                        mesas_combinadas = disp.get("mesas_combinadas") or None
+                    try:
+                        tinput["telefono"] = customer_phone
+                        save_reservation(
+                            db, business_id, conv["id"], customer_phone, tinput, jid,
+                            table_id=table_id, mesas_combinadas=mesas_combinadas,
+                        )
+                    except Exception as e:
+                        print(f"[agent] Error guardando reservación: {e}")
+                        tool_resp = (
+                            "ERROR: Ocurrió un problema técnico al registrar la reservación. "
+                            "Discúlpate con el cliente y pídele que lo intente de nuevo en unos minutos."
+                        )
+
+            reply = _second_turn(client, system, messages, response.content, tool_block.id, tool_resp)
 
         elif tname == "modificar_reservacion":
             fecha_eff = tinput.get("fecha_nueva") or tinput["fecha"]

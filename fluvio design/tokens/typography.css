@@ -1,0 +1,36 @@
+/* ============================================================
+   FLUVIO — Typography tokens
+   Display: Syne (700/800) · UI/body: Outfit (300/400/500)
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Outfit:wght@300;400;500;600&display=swap');
+
+:root {
+  /* Families */
+  --font-display: 'Syne', system-ui, -apple-system, sans-serif;
+  --font-ui: 'Outfit', system-ui, -apple-system, sans-serif;
+
+  /* Weights */
+  --fw-light: 300;     /* @kind font */
+  --fw-regular: 400;   /* @kind font */
+  --fw-medium: 500;    /* @kind font */
+  --fw-display: 700;   /* @kind font */ /* Syne headings */
+  --fw-display-x: 800; /* @kind font */ /* Syne metrics / wordmark */
+
+  /* Display tracking (tightens as size grows) */
+  --track-display: 0.005em;   /* small headings */
+  --track-tight: -0.01em;     /* large titles */
+  --track-metric: -0.01em;    /* KPI numbers */
+
+  /* Type scale (px) */
+  --t-h1: 26px;       /* page titles  — Syne 800 */
+  --t-h2: 18px;       /* section heads — Syne 700 */
+  --t-metric: 32px;   /* KPI numbers   — Syne 800 */
+  --t-body: 14.5px;   /* body          — Outfit 400 */
+  --t-sm: 13px;       /* nav / dense   — Outfit 500 */
+  --t-label: 11px;    /* labels/caps   — Outfit 400/500 */
+  --t-badge: 10.5px;  /* badges        — Outfit 500 */
+
+  --lh-tight: 1.08;  /* @kind font */
+  --lh-body: 1.5;    /* @kind font */
+}

@@ -1,0 +1,22 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Reservation status" subtitle="Confirmada · Pendiente · Sentada · No-show · Cancelada" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body { margin: 0; background: var(--surface); padding: 22px; font-family: var(--font-ui); }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .badge { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <span class="badge badge-conf"><span class="dot"></span>Confirmada</span>
+    <span class="badge badge-pend"><span class="dot"></span>Pendiente</span>
+    <span class="badge badge-seat"><span class="dot"></span>Sentada</span>
+    <span class="badge badge-no"><span class="dot"></span>No-show</span>
+    <span class="badge badge-canc"><span class="dot"></span>Cancelada</span>
+  </div>
+</body>
+</html>

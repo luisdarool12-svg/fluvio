@@ -76,6 +76,7 @@ Todas se leen desde `.env` en la raíz de `platform/`. Las tres apps cargan el m
 | `INTERNAL_JOB_SECRET` | api, bot | valor aleatorio; enviado como header `X-Internal-Secret` |
 | `FRONTEND_URL` | api (CORS) | URL del dashboard, ej. `http://localhost:3001` |
 | `BOT_API_URL` | baileys bridge | URL del bot, ej. `http://localhost:8001` |
+| `API_URL` | bot | URL del API, ej. `http://localhost:8000` — el bot consulta `POST /internal/availability` (motor de mesas) ahí; si el API no responde, el bot hace fail-open (acepta la reserva sin mesa asignada) |
 
 ---
 
@@ -123,6 +124,17 @@ Los endpoints `/internal/*` de `apps/bot/main.py` se comunican con el bridge Bai
 
 `recommended_action(score)` es la única fuente de verdad de los rangos. Se usa tanto en el job nocturno (`jobs/noshow.py`) como en el endpoint `GET /reservations/{business_id}/risk-report`.
 
+### Motor de disponibilidad de mesas
+
+`apps/api/modules/reservations/availability.py` decide si hay mesa para un grupo:
+- `buscar_mesa_ideal()` — mesa libre de menor capacidad suficiente; si no alcanza, combina pares vía `tables.combinable_con`; si está lleno devuelve `proxima_disponibilidad`.
+- Una reserva bloquea su mesa `tables.tiempo_promedio_estancia` minutos; las combinaciones bloquean todas sus mesas vía `reservations.mesas_combinadas`.
+- Consumidores: dashboard (`GET /tables/availability`, JWT) y bot (`POST /internal/availability`, X-Internal-Secret). El bot hace **fail-open**: si el API no responde, acepta la reserva sin mesa (nunca rechaza clientes por fallas técnicas).
+
+### Layouts temporales del salón
+
+`apps/api/modules/floor_plan/availability.py` + tabla `floor_plan_overrides`: el dashboard puede activar un croquis temporal (eventos) sin tocar el plano base. Expira solo (limpieza en el job horario de `POST /internal/noshow/run`) o se revierte manualmente. El plano base solo se edita entrando desde Configuración (`/dashboard/mesas?editarBase=1`).
+
 ### Sistema de prompts del bot
 
 `apps/bot/system_prompt.py` construye el prompt en dos capas:
@@ -144,8 +156,12 @@ Las migraciones se ejecutan manualmente en **Supabase Studio > SQL Editor** en o
 | `003_noshow_system.sql` | no_show_score, reminder_sent, confirmation_sent en reservations |
 | `004_floor_plan_config.sql` | floor_plan en businesses |
 | `005_chatbot_panel.sql` | system_prompt_versions, campos bot_config expandidos |
+| `006_campaigns.sql` | campañas de marketing |
+| `007_cloud_api_phone_id.sql` | phone_number_id de Cloud API |
+| `008_table_availability.sql` | tiempo_promedio_estancia y combinable_con en tables; mesas_combinadas en reservations; índice de traslapes |
+| `009_floor_plan_overrides.sql` | floor_plan_overrides (layouts temporales del salón) + RLS |
 
-**Nueva migración:** crear `006_<nombre>.sql` con el siguiente número secuencial. Nunca modificar migraciones ya ejecutadas.
+**Nueva migración:** crear `0XX_<nombre>.sql` con el siguiente número secuencial. Nunca modificar migraciones ya ejecutadas.
 
 El modelo `businesses.bot_config` es un JSONB que contiene `system_prompt`, `google_credentials_json` (Google Sheets), y configuración del bot.
 

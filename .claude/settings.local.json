@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write",
+        "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const i=JSON.parse(d);const c=i.tool_input?.content||'';const lines=c.split('\\n').length;if(lines>800){console.error('[code-quality] BLOCKED: El archivo excede 800 líneas ('+lines+' líneas). Divide en módulos más pequeños antes de escribir.');process.exit(2)}process.stdout.write(d)})\"",
+        "description": "Bloquea archivos que excedan 800 líneas"
+      },
+      {
+        "matcher": "Write|Edit",
+        "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const i=JSON.parse(d);const c=(i.tool_input?.content||'')+' '+(i.tool_input?.new_string||'');const patterns=[/sk-ant-api0[34]-[A-Za-z0-9\\-_]{90,}/,/SUPABASE_SERVICE_ROLE_KEY\\s*=\\s*[\\\"'][^\\\"']{20,}/,/ANTHROPIC_API_KEY\\s*=\\s*[\\\"'][^\\\"']{10,}/,/WHATSAPP_TOKEN\\s*=\\s*[\\\"'][^\\\"']{10,}/];const hit=patterns.find(p=>p.test(c));if(hit){console.error('[security] BLOCKED — secret hardcodeado detectado. Usa os.environ[] (Python) o process.env[] (TypeScript) en su lugar. Nunca commitees credenciales reales.');process.exit(2)}process.stdout.write(d)})\"",
+        "description": "Bloquea escritura de secrets hardcodeados en código"
+      },
+      {
+        "matcher": "Write",
+        "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const i=JSON.parse(d);const fp=i.tool_input?.file_path||'';const c=i.tool_input?.content||'';if(/(pilots\\/|clients\\/|tenants\\/)[a-z_\\-]+\\/(app|src|api|bot)\\//.test(fp)||/(pilots\\/|clients\\/|tenants\\/)[a-z_\\-]+\\/(app|src|api|bot)\\//.test(c)){console.error('[architecture] BLOCKED — no se crean carpetas por cliente. Los nuevos clientes son FILAS en la tabla businesses. Ejecuta: INSERT INTO businesses (...) en su lugar.');process.exit(2)}process.stdout.write(d)})\"",
+        "description": "Bloquea creación de carpetas per-cliente (viola arquitectura multi-tenant)"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "command": "bash -c 'FILE=\"${FILE_PATH:-}\"; [[ \"$FILE\" == *.py ]] || exit 0; matches=$(grep -n \"print(\" \"$FILE\" 2>/dev/null | grep -v \"#.*print(\" | head -5); [[ -z \"$matches\" ]] && exit 0; echo \"[code-quality] WARNING: print() encontrado en $FILE — usa logging en su lugar:\"; echo \"$matches\"; echo \"→ import logging; logger = logging.getLogger(__name__); logger.info(...)\"'",
+        "description": "Avisa cuando hay print() en archivos Python (usar logging)"
+      },
+      {
+        "matcher": "Write|Edit",
+        "command": "bash -c 'FILE=\"${FILE_PATH:-}\"; [[ \"$FILE\" == *.sql ]] || exit 0; matches=$(grep -nE \"(ALTER TABLE|CREATE TABLE|ADD COLUMN|DROP COLUMN)\" \"$FILE\" 2>/dev/null | head -5); [[ -z \"$matches\" ]] && exit 0; echo \"[schema] WARNING: Cambio de esquema detectado en $FILE\"; echo \"$matches\"; echo \"→ Verifica que existe una migración en platform/packages/database/migrations/ (siguiente número después de 005)\"'",
+        "description": "Avisa cuando hay cambios de esquema sin migración correspondiente"
+      },
+      {
+        "matcher": "Write|Edit",
+        "command": "bash -c 'FILE=\"${FILE_PATH:-}\"; ([[ \"$FILE\" == *.py ]] || [[ \"$FILE\" == *.ts ]] || [[ \"$FILE\" == *.tsx ]]) || exit 0; has_table=$(grep -c \"\\.table(\\\"\" \"$FILE\" 2>/dev/null || echo 0); [[ \"$has_table\" -eq 0 ]] && exit 0; missing=$(grep -n \"\\.table(\\\"\" \"$FILE\" 2>/dev/null | grep -v \"businesses\" | head -3); [[ -z \"$missing\" ]] && exit 0; has_bid=$(grep -c \"business_id\" \"$FILE\" 2>/dev/null || echo 0); [[ \"$has_bid\" -gt 0 ]] && exit 0; echo \"[multi-tenant] WARNING: Queries de Supabase en $FILE sin business_id visible:\"; echo \"$missing\"; echo \"→ Toda query sobre tablas de tenant DEBE filtrar por .eq(\\\\\"business_id\\\\\", business_id)\"'",
+        "description": "Avisa cuando hay queries de Supabase sin filtro business_id"
+      }
+    ]
+  }
+}

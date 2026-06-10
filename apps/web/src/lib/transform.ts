@@ -59,6 +59,8 @@ export function toTable(row: any): Table {
     rotation: row.rotation ?? 0,
     ocupadoManual: row.ocupado_manual ?? false,
     personasManual: row.personas_manual ?? 0,
+    estanciaMin: row.tiempo_promedio_estancia ?? 90,
+    combinableCon: row.combinable_con ?? [],
   }
 }
 

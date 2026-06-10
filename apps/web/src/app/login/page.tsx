@@ -48,7 +48,7 @@ export default function LoginPage() {
         <div style={{ position: 'absolute', bottom: 60, right: -60, width: 320, height: 320, borderRadius: '50%', background: 'radial-gradient(circle, rgba(255,255,255,.04) 0%, transparent 70%)', pointerEvents: 'none' }} />
 
         <a href="/" style={{ display: 'inline-flex' }}>
-          <Wordmark size={28} />
+          <Wordmark size={28} variant="mono" />
         </a>
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', maxWidth: 380 }}>

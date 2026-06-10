@@ -1,0 +1,14 @@
+/* ============================================================
+   FLUVIO — Design System · global entry point
+   "Todo fluye." — Fluid · Reliable · Clear · Yours.
+
+   This file is intentionally a list of @import lines only.
+   Everything reachable from here ships to consuming projects:
+   design tokens (colors, type, spacing/radii/motion) + the
+   base element + component class layer.
+   ============================================================ */
+
+@import url('tokens/typography.css');  /* fonts + type scale (loads Syne + Outfit) */
+@import url('tokens/colors.css');      /* 5-color system: Violet · Coral · Plum · Margen · Niebla */
+@import url('tokens/spacing.css');     /* radii · spacing · motion · layout · elevation */
+@import url('base.css');               /* reset, utilities, buttons, cards, badges, inputs, app shell */

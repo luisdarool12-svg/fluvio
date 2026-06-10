@@ -15,6 +15,8 @@ export interface Table {
   rotation: number
   ocupadoManual: boolean
   personasManual: number
+  estanciaMin: number
+  combinableCon: string[]
 }
 
 export interface ZoneArea {
@@ -45,10 +47,20 @@ export interface FurnitureItem {
   h: number
 }
 
+/** Posición temporal de una mesa dentro de un layout override. */
+export interface TablePosOverride {
+  id: string
+  posX: number
+  posY: number
+  rotation: number
+}
+
 export interface FloorPlanConfig {
   zones: ZoneArea[]
   walls: Wall[]
   furniture: FurnitureItem[]
+  /** Solo en overrides temporales: posiciones de mesas del layout temporal. */
+  tables?: TablePosOverride[]
 }
 
 export interface Client {
@@ -82,17 +94,19 @@ export interface FeedEvent {
   kind: 'new' | 'confirm' | 'remind' | 'chat'
 }
 
+const TABLE_MOCK_DEFAULTS = { estanciaMin: 90, combinableCon: [] as string[] }
+
 export const TABLES: Table[] = [
-  { id: 't1', name: 'Mesa 1',  cap: 2,  zone: 'Terraza',  tipo: 'mesa', active: true,  posX: 15, posY: 15, rotation: 0, ocupadoManual: false, personasManual: 0 },
-  { id: 't2', name: 'Mesa 2',  cap: 2,  zone: 'Terraza',  tipo: 'mesa', active: true,  posX: 30, posY: 15, rotation: 0, ocupadoManual: false, personasManual: 0 },
-  { id: 't3', name: 'Mesa 3',  cap: 4,  zone: 'Terraza',  tipo: 'mesa', active: true,  posX: 50, posY: 15, rotation: 0, ocupadoManual: false, personasManual: 0 },
-  { id: 't4', name: 'Mesa 4',  cap: 4,  zone: 'Interior', tipo: 'mesa', active: true,  posX: 25, posY: 45, rotation: 0, ocupadoManual: false, personasManual: 0 },
-  { id: 't5', name: 'Mesa 5',  cap: 6,  zone: 'Interior', tipo: 'mesa', active: true,  posX: 50, posY: 45, rotation: 0, ocupadoManual: false, personasManual: 0 },
-  { id: 't6', name: 'Mesa 6',  cap: 4,  zone: 'Interior', tipo: 'mesa', active: true,  posX: 72, posY: 45, rotation: 0, ocupadoManual: false, personasManual: 0 },
-  { id: 't7', name: 'Mesa 7',  cap: 8,  zone: 'Interior', tipo: 'mesa', active: false, posX: 72, posY: 70, rotation: 0, ocupadoManual: false, personasManual: 0 },
-  { id: 'b1', name: 'Barra 1', cap: 1,  zone: 'Barra',    tipo: 'mesa', active: true,  posX: 88, posY: 50, rotation: 0, ocupadoManual: false, personasManual: 0 },
-  { id: 'b2', name: 'Barra 2', cap: 1,  zone: 'Barra',    tipo: 'mesa', active: true,  posX: 88, posY: 62, rotation: 0, ocupadoManual: false, personasManual: 0 },
-  { id: 'p1', name: 'Privado', cap: 12, zone: 'Interior', tipo: 'mesa', active: true,  posX: 50, posY: 75, rotation: 0, ocupadoManual: false, personasManual: 0 },
+  { ...TABLE_MOCK_DEFAULTS, id: 't1', name: 'Mesa 1',  cap: 2,  zone: 'Terraza',  tipo: 'mesa', active: true,  posX: 15, posY: 15, rotation: 0, ocupadoManual: false, personasManual: 0 },
+  { ...TABLE_MOCK_DEFAULTS, id: 't2', name: 'Mesa 2',  cap: 2,  zone: 'Terraza',  tipo: 'mesa', active: true,  posX: 30, posY: 15, rotation: 0, ocupadoManual: false, personasManual: 0 },
+  { ...TABLE_MOCK_DEFAULTS, id: 't3', name: 'Mesa 3',  cap: 4,  zone: 'Terraza',  tipo: 'mesa', active: true,  posX: 50, posY: 15, rotation: 0, ocupadoManual: false, personasManual: 0 },
+  { ...TABLE_MOCK_DEFAULTS, id: 't4', name: 'Mesa 4',  cap: 4,  zone: 'Interior', tipo: 'mesa', active: true,  posX: 25, posY: 45, rotation: 0, ocupadoManual: false, personasManual: 0 },
+  { ...TABLE_MOCK_DEFAULTS, id: 't5', name: 'Mesa 5',  cap: 6,  zone: 'Interior', tipo: 'mesa', active: true,  posX: 50, posY: 45, rotation: 0, ocupadoManual: false, personasManual: 0 },
+  { ...TABLE_MOCK_DEFAULTS, id: 't6', name: 'Mesa 6',  cap: 4,  zone: 'Interior', tipo: 'mesa', active: true,  posX: 72, posY: 45, rotation: 0, ocupadoManual: false, personasManual: 0 },
+  { ...TABLE_MOCK_DEFAULTS, id: 't7', name: 'Mesa 7',  cap: 8,  zone: 'Interior', tipo: 'mesa', active: false, posX: 72, posY: 70, rotation: 0, ocupadoManual: false, personasManual: 0 },
+  { ...TABLE_MOCK_DEFAULTS, id: 'b1', name: 'Barra 1', cap: 1,  zone: 'Barra',    tipo: 'mesa', active: true,  posX: 88, posY: 50, rotation: 0, ocupadoManual: false, personasManual: 0 },
+  { ...TABLE_MOCK_DEFAULTS, id: 'b2', name: 'Barra 2', cap: 1,  zone: 'Barra',    tipo: 'mesa', active: true,  posX: 88, posY: 62, rotation: 0, ocupadoManual: false, personasManual: 0 },
+  { ...TABLE_MOCK_DEFAULTS, id: 'p1', name: 'Privado', cap: 12, zone: 'Interior', tipo: 'mesa', active: true,  posX: 50, posY: 75, rotation: 0, ocupadoManual: false, personasManual: 0 },
 ]
 
 export const CLIENTS: Client[] = [
