@@ -1,5 +1,5 @@
 {
-  "name": "Fluvio — Reservaciones",
+  "name": "Fluvio",
   "short_name": "Fluvio",
   "description": "Panel de control de reservaciones para tu restaurante",
   "start_url": "/dashboard/reservaciones",
