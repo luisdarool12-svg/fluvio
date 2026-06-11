@@ -45,7 +45,8 @@ def calculate_no_show_score(
     """
     if now is None:
         now = datetime.now(timezone.utc)
-    if db is None:
+    # Solo crear el cliente si de verdad hay que consultar la base
+    if db is None and (reservation is None or customer is None):
         db = get_supabase()
 
     if reservation is None:

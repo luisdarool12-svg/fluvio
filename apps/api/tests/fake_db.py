@@ -28,6 +28,7 @@ class FakeQuery:
         self._order_col = None
         self._order_desc = False
         self._limit = None
+        self._single = False
         self._op = "select"
         self._payload: Any = None
 
@@ -87,6 +88,11 @@ class FakeQuery:
         self._limit = n
         return self
 
+    def single(self):
+        """Como en postgrest-py: execute() devuelve un dict (o None), no una lista."""
+        self._single = True
+        return self
+
     # ── ejecución ─────────────────────────────────────────────────────────
     def _matching(self) -> List[Dict]:
         rows = [r for r in self._rows if all(f(r) for f in self._filters)]
@@ -120,7 +126,10 @@ class FakeQuery:
                 self._rows.remove(row)
             return SimpleNamespace(data=removed)
 
-        return SimpleNamespace(data=self._matching())
+        rows = self._matching()
+        if self._single:
+            return SimpleNamespace(data=rows[0] if rows else None)
+        return SimpleNamespace(data=rows)
 
 
 class FakeDB:
