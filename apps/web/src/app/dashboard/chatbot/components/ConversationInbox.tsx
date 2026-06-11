@@ -58,14 +58,20 @@ export function ConversationInbox({ businessId }: { businessId: string | null })
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [modeLoading, setModeLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // Load conversations
   useEffect(() => {
     if (!businessId) return
+    setLoadError(null)
     apiFetch('/chatbot/conversations')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) return r.json().then(e => { throw new Error(`${r.status}: ${e?.detail ?? r.statusText}`) })
+        return r.json()
+      })
       .then(setConvs)
+      .catch((e: unknown) => setLoadError(e instanceof Error ? e.message : String(e)))
   }, [businessId])
 
   // Realtime: conversations (Supabase postgres_changes)
@@ -78,7 +84,7 @@ export function ConversationInbox({ businessId }: { businessId: string | null })
         event: '*', schema: 'public', table: 'conversations',
         filter: `business_id=eq.${businessId}`,
       }, () => {
-        apiFetch('/chatbot/conversations').then(r => r.json()).then(setConvs)
+        apiFetch('/chatbot/conversations').then(r => r.json()).then(setConvs).catch(() => {})
       })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
@@ -88,7 +94,7 @@ export function ConversationInbox({ businessId }: { businessId: string | null })
   useEffect(() => {
     if (!businessId) return
     const id = setInterval(() => {
-      apiFetch('/chatbot/conversations').then(r => r.json()).then(setConvs)
+      apiFetch('/chatbot/conversations').then(r => r.json()).then(setConvs).catch(() => {})
     }, 10_000)
     return () => clearInterval(id)
   }, [businessId])
@@ -99,6 +105,7 @@ export function ConversationInbox({ businessId }: { businessId: string | null })
     apiFetch(`/chatbot/conversations/${selected.id}/messages`)
       .then(r => r.json())
       .then(setMessages)
+      .catch(() => {})
   }, [selected])
 
   // Realtime: messages for active conversation (Supabase postgres_changes)
@@ -131,6 +138,7 @@ export function ConversationInbox({ businessId }: { businessId: string | null })
             return lastNew !== lastPrev ? msgs : prev
           })
         })
+        .catch(() => {})
     }, 5_000)
     return () => clearInterval(id)
   }, [selected])
@@ -229,6 +237,13 @@ export function ConversationInbox({ businessId }: { businessId: string | null })
             >{f.label}</button>
           ))}
         </div>
+
+        {/* Error banner */}
+        {loadError && (
+          <div style={{ margin: '0 14px 10px', padding: '8px 12px', background: '#fee2e2', borderRadius: 'var(--r)', fontSize: 12, color: '#b91c1c', wordBreak: 'break-all' }}>
+            Error: {loadError}
+          </div>
+        )}
 
         {/* List */}
         <div style={{ flex: 1, overflowY: 'auto' }}>

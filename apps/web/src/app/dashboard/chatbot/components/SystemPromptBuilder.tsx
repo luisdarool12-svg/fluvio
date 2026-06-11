@@ -18,6 +18,20 @@ async function apiFetch(path: string, init?: RequestInit) {
   })
 }
 
+async function apiJson(path: string, init?: RequestInit) {
+  const r = await apiFetch(path, init)
+  if (!r.ok) {
+    const e = await r.json().catch(() => null)
+    throw new Error(`${r.status}: ${e?.detail ?? r.statusText}`)
+  }
+  return r.json()
+}
+
+function errMsg(e: unknown): string {
+  if (e instanceof TypeError) return 'No se pudo conectar con el servidor (¿API corriendo en el puerto 8000?)'
+  return e instanceof Error ? e.message : String(e)
+}
+
 // ─── Types ────────────────────────────────────────────────────
 
 interface DayHour { day: string; open: boolean; from: string; to: string }
@@ -157,11 +171,12 @@ export function SystemPromptBuilder({ businessId }: { businessId: string | null 
 
   useEffect(() => {
     if (!businessId) return
-    apiFetch('/chatbot/config').then(r => r.json()).then(data => {
+    setErrors([])
+    apiJson('/chatbot/config').then(data => {
       if (data.prompt_form_data) setForm({ ...EMPTY_FORM, ...data.prompt_form_data })
       if (data.bot_config?.system_prompt) setPrompt(data.bot_config.system_prompt)
       if (data.versions) setVersions(data.versions)
-    })
+    }).catch((e: unknown) => setErrors([`No se pudo cargar la configuración — ${errMsg(e)}`]))
   }, [businessId])
 
   function upd<K extends keyof FormData>(k: K, v: FormData[K]) {
@@ -184,13 +199,18 @@ export function SystemPromptBuilder({ businessId }: { businessId: string | null 
 
   async function handleGenerate() {
     setGenerating(true)
-    const res = await apiFetch('/chatbot/config/generate-prompt', {
-      method: 'POST',
-      body: JSON.stringify({ form_data: form }),
-    })
-    const data = await res.json()
-    if (data.system_prompt) setPrompt(data.system_prompt)
-    setGenerating(false)
+    setErrors([])
+    try {
+      const data = await apiJson('/chatbot/config/generate-prompt', {
+        method: 'POST',
+        body: JSON.stringify({ form_data: form }),
+      })
+      if (data.system_prompt) setPrompt(data.system_prompt)
+    } catch (e: unknown) {
+      setErrors([`No se pudo generar el prompt — ${errMsg(e)}`])
+    } finally {
+      setGenerating(false)
+    }
   }
 
   async function handleSave() {
@@ -202,40 +222,54 @@ export function SystemPromptBuilder({ businessId }: { businessId: string | null 
     if (errs.length) { setErrors(errs); return }
     setErrors([])
     setSaving(true)
-    await apiFetch('/chatbot/config', {
-      method: 'POST',
-      body: JSON.stringify({ system_prompt: prompt, form_data: form }),
-    })
-    setSaving(false)
-    setSaved(true)
-    // Refresh versions
-    apiFetch('/chatbot/config').then(r => r.json()).then(d => { if (d.versions) setVersions(d.versions) })
+    try {
+      await apiJson('/chatbot/config', {
+        method: 'POST',
+        body: JSON.stringify({ system_prompt: prompt, form_data: form }),
+      })
+      setSaved(true)
+      // Refresh versions
+      apiJson('/chatbot/config').then(d => { if (d.versions) setVersions(d.versions) }).catch(() => {})
+    } catch (e: unknown) {
+      setErrors([`No se pudo guardar — ${errMsg(e)}`])
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function handleParseMenu() {
     if (!form.menu_text.trim()) return
     setParsingMenu(true)
-    const res = await apiFetch('/chatbot/config/parse-menu', {
-      method: 'POST',
-      body: JSON.stringify({ menu_text: form.menu_text }),
-    })
-    const data = await res.json()
-    if (data.categories) {
-      upd('menu_categories', data.categories)
-      upd('menu_mode', 'manual')
+    setErrors([])
+    try {
+      const data = await apiJson('/chatbot/config/parse-menu', {
+        method: 'POST',
+        body: JSON.stringify({ menu_text: form.menu_text }),
+      })
+      if (data.categories) {
+        upd('menu_categories', data.categories)
+        upd('menu_mode', 'manual')
+      }
+    } catch (e: unknown) {
+      setErrors([`No se pudo estructurar el menú — ${errMsg(e)}`])
+    } finally {
+      setParsingMenu(false)
     }
-    setParsingMenu(false)
   }
 
   async function handleRestore(id: string) {
-    await apiFetch(`/chatbot/config/restore/${id}`, { method: 'POST' })
-    apiFetch('/chatbot/config').then(r => r.json()).then(data => {
+    setErrors([])
+    try {
+      await apiJson(`/chatbot/config/restore/${id}`, { method: 'POST' })
+      const data = await apiJson('/chatbot/config')
       if (data.prompt_form_data) setForm({ ...EMPTY_FORM, ...data.prompt_form_data })
       if (data.bot_config?.system_prompt) setPrompt(data.bot_config.system_prompt)
       if (data.versions) setVersions(data.versions)
-    })
-    setShowHistory(false)
-    setSaved(true)
+      setShowHistory(false)
+      setSaved(true)
+    } catch (e: unknown) {
+      setErrors([`No se pudo restaurar la versión — ${errMsg(e)}`])
+    }
   }
 
   const charCount = prompt.length
