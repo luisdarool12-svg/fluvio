@@ -1,8 +1,9 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { ShieldCheck, TriangleAlert, Zap, CreditCard } from 'lucide-react'
+import { TriangleAlert, Zap, CreditCard } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { createClient } from '@/utils/supabase/client'
+import EmbeddedSignup from '@/components/EmbeddedSignup'
 
 type Tab = 'perfil' | 'whatsapp' | 'notificaciones' | 'plan'
 
@@ -202,28 +203,12 @@ export default function ConfiguracionPage() {
 
       {tab === 'whatsapp' && (
         <div className="col gap-14">
-          <div style={{ background: 'var(--st-conf-bg)', border: '1px solid var(--st-conf-dot)', borderRadius: 'var(--r)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 34, height: 34, borderRadius: 99, background: '#25D366', display: 'grid', placeItems: 'center', flex: 'none' }}>
-              <ShieldCheck size={18} color="#fff" />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, color: 'var(--st-conf)' }}>WhatsApp conectado</div>
-              <div className="faint" style={{ fontSize: 13 }}>{settings.telefono_contacto || '+52 477 912 3456'} · Bot activo · 1.284 mensajes enviados</div>
-            </div>
-            <button className="btn btn-sm btn-ghost">Reconectar</button>
+          <div className="card card-pad">
+            <EmbeddedSignup />
           </div>
 
           <div className="card card-pad">
-            <div className="row" style={{ borderTop: '1px solid var(--line)', padding: '16px 0', gap: 24, alignItems: 'center' }}>
-              <label style={{ width: 260, fontSize: 14, fontWeight: 500, color: 'var(--ink-2)', flex: 'none' }}>Número de WhatsApp Business</label>
-              <input
-                className="input"
-                type="text"
-                value={settings.telefono_contacto}
-                onChange={e => setSettings(s => ({ ...s, telefono_contacto: e.target.value }))}
-                style={{ flex: 1 }}
-              />
-            </div>
+            <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16 }}>Configuración del bot</h3>
             <div className="row" style={{ borderTop: '1px solid var(--line)', padding: '16px 0', gap: 24, alignItems: 'flex-start' }}>
               <label style={{ width: 260, fontSize: 14, fontWeight: 500, color: 'var(--ink-2)', flex: 'none', paddingTop: 10 }}>Mensaje de bienvenida</label>
               <textarea
@@ -246,7 +231,7 @@ export default function ConfiguracionPage() {
               <button
                 className="btn btn-primary"
                 disabled={saving}
-                onClick={() => save({ telefono_contacto: settings.telefono_contacto, mensaje_bienvenida: settings.mensaje_bienvenida, tomar_24h: settings.tomar_24h })}
+                onClick={() => save({ mensaje_bienvenida: settings.mensaje_bienvenida, tomar_24h: settings.tomar_24h })}
               >
                 {saving ? 'Guardando…' : 'Guardar cambios'}
               </button>

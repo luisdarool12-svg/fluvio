@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import create_client
 
-from routers import reservations, customers, tables, chatbot, business, campaigns
+from routers import reservations, customers, tables, chatbot, business, campaigns, whatsapp_setup
 from jobs.noshow import run_nightly_noshow_check
 from modules.reservations.availability import DURACION_DEFAULT_MIN, buscar_mesa_ideal
 from modules.floor_plan.availability import TZ_DEFAULT, revert_expired_overrides
@@ -20,9 +20,13 @@ app = FastAPI(
     version="0.1.0",
 )
 
+_frontend = os.getenv("FRONTEND_URL", "http://localhost:3001")
+_dev_origins = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://127.0.0.1:3000", "http://127.0.0.1:3001", "http://127.0.0.1:3002"]
+_origins = list({_frontend, *_dev_origins}) if os.getenv("ENV", "development") != "production" else [_frontend]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:3000")],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,6 +38,7 @@ app.include_router(tables.router, prefix="/tables", tags=["tables"])
 app.include_router(chatbot.router, prefix="/chatbot", tags=["chatbot"])
 app.include_router(business.router, prefix="/business", tags=["business"])
 app.include_router(campaigns.router, prefix="/campaigns", tags=["campaigns"])
+app.include_router(whatsapp_setup.router, prefix="/whatsapp/setup", tags=["whatsapp"])
 
 
 def _verify_internal_secret(x_internal_secret: str) -> None:

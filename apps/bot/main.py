@@ -60,15 +60,20 @@ async def receive_message(request: Request):
             )
             print(f"[webhook] reply={reply!r}")
             if reply:
-                await _send_whatsapp_cloud(from_number, reply, phone_num_id)
+                biz = get_business(phone_num_id)
+                biz_token = (biz or {}).get("whatsapp_access_token")
+                await _send_whatsapp_cloud(from_number, reply, phone_num_id, biz_token)
     except Exception as e:
         print(f"[webhook] ERROR: {type(e).__name__}: {e}")
     return {"status": "ok"}
 
 
-async def _send_whatsapp_cloud(to: str, text: str, phone_num_id: str):
+async def _send_whatsapp_cloud(
+    to: str, text: str, phone_num_id: str, access_token: str | None = None
+):
     import httpx
-    token = os.getenv("WHATSAPP_TOKEN", "")
+    # Usa el token del negocio si existe; si no, cae al token global del env.
+    token = access_token or os.getenv("WHATSAPP_TOKEN", "")
     url = f"https://graph.facebook.com/v20.0/{phone_num_id}/messages"
     async with httpx.AsyncClient() as client:
         resp = await client.post(
@@ -141,14 +146,15 @@ async def flush_outbox(_: None = Depends(_verify_internal)):
     error_count = 0
 
     for item in items.data:
-        biz = db.table("businesses").select("telefono_whatsapp").eq(
+        biz = db.table("businesses").select("telefono_whatsapp, whatsapp_access_token").eq(
             "id", item["business_id"]
         ).execute()
         if not biz.data:
             continue
         phone_num_id = biz.data[0]["telefono_whatsapp"]
+        biz_token = biz.data[0].get("whatsapp_access_token")
         try:
-            await _send_whatsapp_cloud(item["phone"], item["content"], phone_num_id)
+            await _send_whatsapp_cloud(item["phone"], item["content"], phone_num_id, biz_token)
             db.table("outbox").update({"sent": True}).eq("id", item["id"]).execute()
             sent_count += 1
         except Exception as e:
