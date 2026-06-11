@@ -20,6 +20,8 @@ env/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+.coverage
+htmlcov/
 
 # macOS
 .DS_Store
