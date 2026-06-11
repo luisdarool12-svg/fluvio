@@ -1,3 +1,4 @@
+import asyncio
 import os
 import httpx
 from datetime import datetime, timezone
@@ -12,6 +13,19 @@ from core.auth import get_business_id
 router = APIRouter()
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
+
+# Mensajes máximos por día según el tier del Business Portfolio en Meta.
+# Tier 0 = sin verificación (250), luego 1k / 10k / 100k / ilimitado.
+_TIER_LIMITS: dict[int, int] = {
+    0: 250,
+    1: 1_000,
+    2: 10_000,
+    3: 100_000,
+    4: 10_000_000,
+}
+
+# Pausa entre mensajes en segundos.  Meta detecta ráfagas como spam.
+_SEND_DELAY_SECONDS = 1.2
 
 
 def get_supabase():
@@ -38,14 +52,18 @@ class CampaignCreate(BaseModel):
 class GenerateRequest(BaseModel):
     tipo: str
     segment: str
-    context: Optional[str] = None  # info extra que da el dueño
+    context: Optional[str] = None
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _get_segment_customers(db, business_id: str, segment: str) -> list[dict]:
-    query = db.table("customers").select("id,nombre,telefono,visitas,ultima_visita").eq(
-        "business_id", business_id
+    """Retorna sólo clientes con whatsapp_opt_in=true en el segmento dado."""
+    query = (
+        db.table("customers")
+        .select("id,nombre,telefono,visitas,ultima_visita")
+        .eq("business_id", business_id)
+        .eq("whatsapp_opt_in", True)   # ← NUNCA enviar sin opt-in
     )
     if segment == "vip":
         query = query.gte("visitas", 5)
@@ -57,12 +75,44 @@ def _get_segment_customers(db, business_id: str, segment: str) -> list[dict]:
     return query.execute().data
 
 
-async def _send_cloud_api(phone: str, message: str, phone_number_id: str, token: str) -> bool:
+def _get_business_compliance(db, business_id: str) -> dict:
+    """Devuelve tier, quality rating y contador diario del negocio."""
+    result = db.table("businesses").select(
+        "whatsapp_tier,whatsapp_quality,whatsapp_msgs_today,whatsapp_msgs_reset,telefono_whatsapp"
+    ).eq("id", business_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Negocio no encontrado")
+    return result.data[0]
+
+
+def _reset_daily_counter_if_needed(db, business_id: str, compliance: dict) -> int:
+    """Resetea el contador diario si cambió el día UTC y devuelve el valor actual."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    reset_date = compliance.get("whatsapp_msgs_reset") or ""
+    if reset_date < today:
+        db.table("businesses").update({
+            "whatsapp_msgs_today": 0,
+            "whatsapp_msgs_reset": today,
+        }).eq("id", business_id).execute()
+        return 0
+    return compliance.get("whatsapp_msgs_today", 0)
+
+
+def _daily_limit(tier: int) -> int:
+    return _TIER_LIMITS.get(tier, _TIER_LIMITS[0])
+
+
+async def _send_whatsapp_message(phone: str, message: str, phone_number_id: str, token: str) -> bool:
     url = f"https://graph.facebook.com/v20.0/{phone_number_id}/messages"
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
             url,
-            json={"messaging_product": "whatsapp", "to": phone, "type": "text", "text": {"body": message}},
+            json={
+                "messaging_product": "whatsapp",
+                "to": phone,
+                "type": "text",
+                "text": {"body": message},
+            },
             headers={"Authorization": f"Bearer {token}"},
         )
         return resp.status_code == 200
@@ -75,7 +125,6 @@ def generate_campaign_copy(
     body: GenerateRequest,
     business_id: str = Depends(get_business_id),
 ):
-    """Claude genera el texto de la campaña en base al tipo y segmento."""
     db = get_supabase()
     biz = db.table("businesses").select("nombre,tipo").eq("id", business_id).execute()
     if not biz.data:
@@ -84,13 +133,11 @@ def generate_campaign_copy(
     biz_nombre = biz.data[0]["nombre"]
 
     segment_labels = {
-        "all": "todos los clientes",
+        "all": "todos los clientes que dieron consentimiento",
         "vip": "clientes VIP (5 o más visitas)",
         "inactive": "clientes inactivos (sin visita en 30+ días)",
         "new": "clientes nuevos (primera visita)",
     }
-    segment_label = segment_labels.get(body.segment, body.segment)
-
     type_labels = {
         "reactivacion": "reactivar a clientes que no han vuelto",
         "promo": "promocionar una oferta especial del restaurante",
@@ -98,14 +145,13 @@ def generate_campaign_copy(
         "cumpleanos": "felicitar a clientes y ofrecerles un beneficio",
         "otro": "comunicación general",
     }
-    type_label = type_labels.get(body.tipo, body.tipo)
 
     extra = f"\nContexto adicional: {body.context}" if body.context else ""
-
     prompt = (
         f"Eres el encargado de marketing de {biz_nombre}, un restaurante en México. "
-        f"Escribe un mensaje de WhatsApp corto (máximo 3 párrafos) para {segment_label}. "
-        f"El objetivo de la campaña es: {type_label}.{extra}\n\n"
+        f"Escribe un mensaje de WhatsApp corto (máximo 3 párrafos) para "
+        f"{segment_labels.get(body.segment, body.segment)}. "
+        f"El objetivo de la campaña es: {type_labels.get(body.tipo, body.tipo)}.{extra}\n\n"
         "El tono debe ser cálido, amigable y profesional. Usa emojis con moderación. "
         "NO incluyas variables entre corchetes — escribe el mensaje listo para enviar. "
         "Responde solo con el texto del mensaje, sin explicaciones ni encabezados."
@@ -132,6 +178,7 @@ def list_campaigns(business_id: str = Depends(get_business_id)):
 @router.post("/", status_code=201)
 def create_campaign(body: CampaignCreate, business_id: str = Depends(get_business_id)):
     db = get_supabase()
+    # Contar sólo clientes con opt-in — el total real que recibirá la campaña
     customers = _get_segment_customers(db, business_id, body.audience_filter.segment)
 
     row = {
@@ -205,56 +252,107 @@ def get_campaign_stats(campaign_id: str, business_id: str = Depends(get_business
 
 @router.post("/{campaign_id}/send")
 async def send_campaign(campaign_id: str, business_id: str = Depends(get_business_id)):
-    """Envía la campaña a todos los destinatarios vía WhatsApp Cloud API."""
+    """Envía la campaña respetando las reglas anti-ban de Meta."""
     db = get_supabase()
 
-    campaign = db.table("campaigns").select("*").eq(
+    # ── 1. Verificar que la campaña existe y está en estado enviable ──────────
+    campaign_result = db.table("campaigns").select("*").eq(
         "id", campaign_id
     ).eq("business_id", business_id).execute()
-    if not campaign.data:
+    if not campaign_result.data:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
 
-    c = campaign.data[0]
+    c = campaign_result.data[0]
     if c["estado"] not in ("borrador", "programada"):
         raise HTTPException(status_code=400, detail=f"La campaña está en estado '{c['estado']}'")
 
-    biz = db.table("businesses").select("telefono_whatsapp").eq("id", business_id).execute()
-    if not biz.data:
-        raise HTTPException(status_code=404, detail="Negocio no encontrado")
+    # ── 2. Verificar compliance del negocio ───────────────────────────────────
+    compliance = _get_business_compliance(db, business_id)
 
-    phone_number_id = biz.data[0]["telefono_whatsapp"]
+    # Bloquear si quality rating está en rojo — enviar ahora agravaría el problema
+    if compliance["whatsapp_quality"] == "red":
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Campaña bloqueada: el Quality Rating de WhatsApp está en ROJO. "
+                "Revisa Meta Business Manager, corrige el problema y actualiza "
+                "el rating en Configuración antes de enviar."
+            ),
+        )
+
+    phone_number_id = compliance.get("telefono_whatsapp")
     token = os.environ.get("WHATSAPP_TOKEN", "")
+    if not token or not phone_number_id:
+        raise HTTPException(status_code=500, detail="Configuración de WhatsApp incompleta")
 
-    if not token:
-        raise HTTPException(status_code=500, detail="WHATSAPP_TOKEN no configurado")
+    # ── 3. Verificar límite diario de mensajes según tier ─────────────────────
+    msgs_today = _reset_daily_counter_if_needed(db, business_id, compliance)
+    tier = compliance.get("whatsapp_tier", 1)
+    daily_limit = _daily_limit(tier)
 
-    db.table("campaigns").update({"estado": "enviando"}).eq("id", campaign_id).execute()
-
-    pending = db.table("campaign_recipients").select(
+    pending_result = db.table("campaign_recipients").select(
         "id,customer_id,customers(telefono)"
     ).eq("campaign_id", campaign_id).eq("enviado", False).execute()
 
+    pending = pending_result.data
+    remaining_quota = daily_limit - msgs_today
+
+    if remaining_quota <= 0:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Límite diario alcanzado (Tier {tier}: {daily_limit} mensajes/día). "
+                "Los contadores se reinician a medianoche UTC."
+            ),
+        )
+
+    # Si la audiencia supera la cuota restante, enviar sólo hasta el límite
+    sendable = pending[:remaining_quota]
+    skipped = len(pending) - len(sendable)
+
+    # ── 4. Enviar con rate limiting ───────────────────────────────────────────
+    db.table("campaigns").update({"estado": "enviando"}).eq("id", campaign_id).execute()
+
     sent = 0
     errors = 0
-    for recipient in pending.data:
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    for recipient in sendable:
         cust = recipient.get("customers") or {}
         phone = cust.get("telefono", "")
         if not phone:
             continue
-        ok = await _send_cloud_api(phone, c["mensaje"], phone_number_id, token)
-        now_iso = datetime.now(timezone.utc).isoformat()
+
+        ok = await _send_whatsapp_message(phone, c["mensaje"], phone_number_id, token)
         db.table("campaign_recipients").update({
             "enviado": ok,
             "sent_at": now_iso if ok else None,
         }).eq("id", recipient["id"]).execute()
+
         if ok:
             sent += 1
         else:
             errors += 1
 
+        # Pausa entre mensajes — evita el patrón de velocidad que Meta detecta como spam
+        await asyncio.sleep(_SEND_DELAY_SECONDS)
+
+    # ── 5. Actualizar estado de campaña y contador del negocio ─────────────────
+    new_state = "completada" if skipped == 0 else "borrador"
     db.table("campaigns").update({
-        "estado": "completada",
+        "estado": new_state,
         "total_enviados": sent,
     }).eq("id", campaign_id).execute()
 
-    return {"sent": sent, "errors": errors}
+    db.table("businesses").update({
+        "whatsapp_msgs_today": msgs_today + sent,
+    }).eq("id", business_id).execute()
+
+    return {
+        "sent": sent,
+        "errors": errors,
+        "skipped_quota": skipped,
+        "remaining_quota": max(0, remaining_quota - sent),
+        "daily_limit": daily_limit,
+        "tier": tier,
+    }

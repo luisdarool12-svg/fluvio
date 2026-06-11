@@ -128,8 +128,13 @@ def get_recent_history(db: Client, conv_id: int, limit: int = 20) -> list[dict]:
 # ─── Clientes ────────────────────────────────────────────────────────────────
 
 def upsert_customer(db: Client, business_id: str, phone: str, nombre: str, jid: Optional[str] = None) -> str:
-    """Upsert customer and return their UUID."""
-    existing = db.table("customers").select("id,visitas").eq(
+    """Upsert customer and return their UUID.
+
+    El hecho de que el cliente nos escriba primero es opt-in válido según la política
+    de WhatsApp (el usuario inició la conversación).  Por eso siempre marcamos
+    whatsapp_opt_in=True aquí — nunca en mensajes outbound sin consentimiento previo.
+    """
+    existing = db.table("customers").select("id,visitas,whatsapp_opt_in").eq(
         "business_id", business_id
     ).eq("telefono", phone).execute()
 
@@ -140,6 +145,10 @@ def upsert_customer(db: Client, business_id: str, phone: str, nombre: str, jid: 
         patch: dict = {"nombre": nombre, "visitas": visitas, "ultima_visita": now_iso}
         if jid:
             patch["jid"] = jid
+        # Marcar opt-in si aún no estaba — el cliente acaba de escribirnos
+        if not existing.data[0].get("whatsapp_opt_in"):
+            patch["whatsapp_opt_in"] = True
+            patch["opt_in_date"] = now_iso
         db.table("customers").update(patch).eq("id", cid).execute()
         return cid
 
@@ -149,6 +158,8 @@ def upsert_customer(db: Client, business_id: str, phone: str, nombre: str, jid: 
         "nombre": nombre,
         "visitas": 1,
         "ultima_visita": now_iso,
+        "whatsapp_opt_in": True,
+        "opt_in_date": now_iso,
     }
     if jid:
         row["jid"] = jid
