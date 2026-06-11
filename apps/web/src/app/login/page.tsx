@@ -65,7 +65,7 @@ export default function LoginPage() {
               </span>
             </div>
             <p style={{ color: 'rgba(255,255,255,.85)', fontSize: 15, lineHeight: 1.6, marginBottom: 14 }}>
-              "Antes perdíamos 3 o 4 mesas cada fin de semana por no-shows. Desde Fluvio, casi no pasa."
+              &ldquo;Antes perdíamos 3 o 4 mesas cada fin de semana por no-shows. Desde Fluvio, casi no pasa.&rdquo;
             </p>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ width: 34, height: 34, borderRadius: 99, background: 'var(--accent)', display: 'grid', placeItems: 'center', color: '#fff', fontSize: 13, fontWeight: 700 }}>LD</div>
