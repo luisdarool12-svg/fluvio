@@ -98,7 +98,7 @@ Cliente WhatsApp
         → respuesta al cliente vía Baileys / WhatsApp Cloud API
 ```
 
-**Cache de negocio:** `agent._business_cache` es un dict en memoria por `phone_number_id`. No expira en runtime; si se actualiza `businesses.bot_config` o `system_prompt` en el dashboard, el bot usa el valor stale hasta reiniciarse.
+**Cache de negocio:** `agent._business_cache` es un dict en memoria por `phone_number_id` con entradas `(data, fetched_at)` y TTL de 5 minutos (`BUSINESS_CACHE_TTL_SECONDS`). Cambios a `businesses.bot_config` o `system_prompt` desde el dashboard llegan al bot en ≤5 min sin reiniciar. Si Supabase falla al refrescar, sirve la entrada vencida (stale) en vez de tirar la conversación.
 
 ### Autenticación del dashboard (apps/api)
 
@@ -108,7 +108,7 @@ Cliente WhatsApp
 4. Todos los endpoints del API usan `business_id: str = Depends(get_business_id)`.
 5. **Excepción:** `POST /webhook/whatsapp` y `GET /health` son los únicos endpoints públicos.
 
-**Nota importante:** el middleware de Next.js (`apps/web/src/middleware.ts`) solo refresca la sesión pero no redirige a `/login`. La protección de rutas es cliente-side en `DashboardLayout`. Un fix server-side en el middleware está pendiente.
+**Nota:** el middleware de Next.js (`apps/web/src/middleware.ts`) refresca la sesión con `getClaims()` y redirige a `/login` cuando no hay sesión en rutas `/dashboard/*` (la landing `/`, `/login` y los assets siguen públicos). `DashboardLayout` conserva además su protección client-side.
 
 ### Endpoints internos del bot (`/internal/*`)
 
@@ -160,6 +160,9 @@ Las migraciones se ejecutan manualmente en **Supabase Studio > SQL Editor** en o
 | `007_cloud_api_phone_id.sql` | phone_number_id de Cloud API |
 | `008_table_availability.sql` | tiempo_promedio_estancia y combinable_con en tables; mesas_combinadas en reservations; índice de traslapes |
 | `009_floor_plan_overrides.sql` | floor_plan_overrides (layouts temporales del salón) + RLS |
+| `010_anti_ban_compliance.sql` | whatsapp_opt_in en customers; tier/quality/contadores diarios en businesses; reset_daily_message_count() |
+| `011_embedded_signup.sql` | waba_id, whatsapp_access_token, whatsapp_connected en businesses (Embedded Signup) |
+| `012_security_hardening.sql` | search_path fijo en las funciones de Postgres (linter de Supabase) |
 
 **Nueva migración:** crear `0XX_<nombre>.sql` con el siguiente número secuencial. Nunca modificar migraciones ya ejecutadas.
 
