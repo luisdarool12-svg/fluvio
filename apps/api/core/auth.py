@@ -1,10 +1,14 @@
+import logging
 import os
+from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, jwk, JWTError
 from supabase import create_client
 
-bearer = HTTPBearer()
+logger = logging.getLogger("uvicorn.error")
+
+bearer = HTTPBearer(auto_error=False)
 
 # Supabase project uses ES256 (ECDSA P-256) for JWT signing.
 # Public key fetched from: https://<project>.supabase.co/auth/v1/.well-known/jwks.json
@@ -28,12 +32,19 @@ def _get_supabase():
 
 
 def get_business_id(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
 ) -> str:
     """
     Validates a Supabase JWT (ES256) and returns the business_id.
     Falls back to a DB lookup when the Auth Hook hasn't injected business_id.
     """
+    if credentials is None or not credentials.credentials:
+        logger.warning("[auth] Rechazado: falta el header Authorization o el token va vacío")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Falta el token de autenticación (sesión no iniciada o expirada)",
+        )
+
     token = credentials.credentials
     try:
         payload = jwt.decode(
@@ -42,7 +53,8 @@ def get_business_id(
             algorithms=["ES256"],
             options={"verify_aud": False},
         )
-    except JWTError:
+    except JWTError as e:
+        logger.warning(f"[auth] Rechazado: token inválido — {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token inválido o expirado",
@@ -55,6 +67,7 @@ def get_business_id(
     # Auth Hook not configured — look up business_id from users table
     user_id = payload.get("sub")
     if not user_id:
+        logger.warning("[auth] Rechazado: el token no contiene claim sub")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Token no contiene sub",
@@ -69,6 +82,7 @@ def get_business_id(
         .execute()
     )
     if not result.data or not result.data.get("business_id"):
+        logger.warning(f"[auth] Rechazado: usuario {user_id} sin business_id en tabla users")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Usuario sin negocio asociado",
