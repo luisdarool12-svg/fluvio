@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import unicodedata
 from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -37,8 +38,14 @@ def _db() -> Client:
 
 
 # ─── Cache de negocio ────────────────────────────────────────────────────────
+# Entradas (data, fetched_at) con TTL: cambios a businesses.bot_config desde el
+# dashboard llegan al bot en ≤ BUSINESS_CACHE_TTL_SECONDS sin reiniciar.
+# Si Supabase no responde al refrescar, se sirve la entrada vencida (stale)
+# antes que tirar la conversación.
 
-_business_cache: dict[str, dict] = {}
+BUSINESS_CACHE_TTL_SECONDS = 300
+
+_business_cache: dict[str, tuple[dict, float]] = {}
 
 # ─── Estado de pausa (en memoria, por business_id) ───────────────────────────
 
@@ -58,13 +65,24 @@ def is_paused(business_id: str) -> bool:
 
 
 def get_business(phone_number_id: str) -> Optional[dict]:
-    if phone_number_id in _business_cache:
-        return _business_cache[phone_number_id]
-    result = _db().table("businesses").select("*").eq(
-        "telefono_whatsapp", phone_number_id
-    ).eq("activo", True).execute()
+    cached = _business_cache.get(phone_number_id)
+    if cached is not None:
+        data, fetched_at = cached
+        if time.monotonic() - fetched_at < BUSINESS_CACHE_TTL_SECONDS:
+            return data
+
+    try:
+        result = _db().table("businesses").select("*").eq(
+            "telefono_whatsapp", phone_number_id
+        ).eq("activo", True).execute()
+    except Exception as e:
+        if cached is not None:
+            print(f"[get_business] Supabase falló, sirviendo cache stale: {e}")
+            return cached[0]
+        raise
+
     if result.data:
-        _business_cache[phone_number_id] = result.data[0]
+        _business_cache[phone_number_id] = (result.data[0], time.monotonic())
         return result.data[0]
     return None
 
