@@ -1,8 +1,9 @@
 import os
 import json
+import base64
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 import httpx
 import anthropic
@@ -306,27 +307,106 @@ def generate_prompt(body: GeneratePromptBody, business_id: str = Depends(get_bus
     return {"system_prompt": prompt, "char_count": len(prompt)}
 
 
+_MENU_JSON_SYSTEM = (
+    "Eres un asistente que extrae menús de restaurante y los convierte a JSON estructurado. "
+    "Devuelve ÚNICAMENTE un JSON válido con este formato exacto (sin markdown, sin explicaciones):\n"
+    '{"categories": [{"name": "Nombre categoría", "items": [{"name": "Platillo", "description": "", "price": 0, "tags": [], "available": true}]}]}\n'
+    "Las tags válidas son: vegetarian, spicy, recommended. El precio debe ser número sin símbolo $. "
+    "Si no hay precio visible usa 0. Extrae todos los platillos disponibles."
+)
+
+_CLAUDE_CLIENT = None
+
+
+def _claude_client() -> anthropic.Anthropic:
+    global _CLAUDE_CLIENT
+    if _CLAUDE_CLIENT is None:
+        _CLAUDE_CLIENT = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    return _CLAUDE_CLIENT
+
+
+def _parse_menu_json(text: str) -> dict:
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        text = text.rsplit("```", 1)[0].strip()
+    return json.loads(text)
+
+
 @router.post("/config/parse-menu")
 def parse_menu(body: ParseMenuBody, business_id: str = Depends(get_business_id)):
     """Uses Claude to parse free-text menu into structured categories."""
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    response = client.messages.create(
+    response = _claude_client().messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=2048,
-        system=(
-            "Eres un asistente que convierte menús de restaurante en formato texto a JSON estructurado. "
-            "Devuelve ÚNICAMENTE un JSON válido con este formato exacto (sin markdown, sin explicaciones):\n"
-            '{"categories": [{"name": "Nombre categoría", "items": [{"name": "Platillo", "description": "", "price": 0, "tags": [], "available": true}]}]}\n'
-            "Las tags válidas son: vegetarian, spicy, recommended. El precio debe ser número, sin símbolo $."
-        ),
+        max_tokens=4096,
+        system=_MENU_JSON_SYSTEM,
         messages=[{"role": "user", "content": body.menu_text}],
     )
-    import json
     try:
-        parsed = json.loads(response.content[0].text)
+        return _parse_menu_json(response.content[0].text)
     except Exception:
         raise HTTPException(status_code=422, detail="No se pudo parsear el menú. Intenta con un formato más claro.")
-    return parsed
+
+
+_ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_MAX_FILE_BYTES = 20 * 1024 * 1024  # 20 MB
+
+
+@router.post("/config/parse-menu-file")
+async def parse_menu_file(
+    file: UploadFile = File(...),
+    business_id: str = Depends(get_business_id),
+):
+    """Extracts a structured menu from an uploaded image (JPG/PNG/WEBP) or PDF using Claude vision."""
+    content = await file.read()
+    if len(content) > _MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="El archivo no puede superar 20 MB")
+
+    mime = (file.content_type or "").lower()
+    if mime in _ALLOWED_IMAGE_TYPES:
+        content_block = {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime,
+                "data": base64.b64encode(content).decode(),
+            },
+        }
+    elif mime == "application/pdf":
+        content_block = {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": base64.b64encode(content).decode(),
+            },
+        }
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail="Solo se aceptan imágenes (JPG, PNG, WEBP) y archivos PDF",
+        )
+
+    response = _claude_client().messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=4096,
+        system=_MENU_JSON_SYSTEM,
+        messages=[{
+            "role": "user",
+            "content": [
+                content_block,
+                {"type": "text", "text": "Extrae el menú completo de este archivo y devuélvelo en el formato JSON indicado."},
+            ],
+        }],
+    )
+
+    try:
+        return _parse_menu_json(response.content[0].text)
+    except Exception:
+        raise HTTPException(
+            status_code=422,
+            detail="No se pudo extraer el menú. Intenta con una imagen más clara o un PDF con texto seleccionable.",
+        )
 
 
 # ─── Stats ───────────────────────────────────────────────────
@@ -446,58 +526,69 @@ def _format_events(events: list) -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt(form: dict) -> str:
-    name = form.get("restaurant_name", "el restaurante")
-    bot_name = form.get("bot_name") or f"Asistente de {name}"
-    cuisine = form.get("cuisine_type", "restaurante")
-    address = form.get("address", "")
+def build_system_prompt(form: dict) -> str:  # noqa: C901
+    # ── campos base ────────────────────────────────────────────
+    name        = form.get("restaurant_name", "el restaurante")
+    bot_name    = form.get("bot_name") or f"Asistente de {name}"
+    cuisine     = form.get("cuisine_type", "restaurante")
+    address     = form.get("address", "")
     neighborhood = form.get("neighborhood", "")
-    city = form.get("city", "")
-    location = ", ".join(p for p in [address, neighborhood, city] if p)
-    phone = form.get("phone", "")
-    website = form.get("website", "")
-    instagram = form.get("instagram", "")
+    city        = form.get("city", "")
+    location    = ", ".join(p for p in [address, neighborhood, city] if p)
+    phone       = form.get("phone", "")
+    website     = form.get("website", "")
+    instagram   = form.get("instagram", "")
 
-    tone = _TONE_MAP.get(form.get("tone", "formal"), "formal usando usted")
-    language = _LANG_MAP.get(form.get("language", "bilingual"), "el idioma del cliente")
-    length = _LENGTH_MAP.get(form.get("response_length", "concise"), "2-3 líneas máximo")
+    tone_key     = form.get("tone", "formal")
+    language_key = form.get("language", "bilingual")
+    length_key   = form.get("response_length", "concise")
 
+    pronoun = "usted" if tone_key in ("formal", "semiformal") else "tú"
+    tone_label  = _TONE_MAP.get(tone_key, "formal usando usted")
+    length_str  = _LENGTH_MAP.get(length_key, "2-3 líneas máximo")
+
+    # ── horario ────────────────────────────────────────────────
     hours_list = form.get("hours", [])
     hours_note = form.get("hours_note", "")
-    hours_str = _format_hours(hours_list)
+    hours_str  = _format_hours(hours_list)
     if hours_note:
         hours_str += f"\nNota: {hours_note}"
 
+    # detectar días cerrados para mencionarlos en el flujo de reservación
+    closed_days = [
+        h["day"].capitalize() for h in hours_list if not h.get("open")
+    ]
+
+    # ── menú ───────────────────────────────────────────────────
     menu_mode = form.get("menu_mode", "manual")
-    if menu_mode == "manual":
-        menu_str = _format_menu(form.get("menu_categories", []))
-    else:
-        menu_str = form.get("menu_text", "Menú no especificado.")
+    menu_str  = (
+        _format_menu(form.get("menu_categories", []))
+        if menu_mode == "manual"
+        else form.get("menu_text", "Menú no especificado.")
+    )
+    can_recommend = form.get("can_recommend", True)
+    show_prices   = form.get("show_prices", True)
 
-    accepts_res = form.get("accepts_reservations", False)
-    if accepts_res:
-        max_p = form.get("reservation_max_people", 12)
-        advance = form.get("reservation_advance_hours", 2)
-        res_contact = form.get("reservation_contact", phone)
-        reservations_str = (
-            f"Sí aceptamos reservaciones.\n"
-            f"- Máximo {max_p} personas por reservación\n"
-            f"- Anticipación mínima: {advance} horas\n"
-            f"- Para confirmar: {res_contact}"
-        )
-    else:
-        reservations_str = "No aceptamos reservaciones en este momento. Los clientes son atendidos por orden de llegada."
-
+    # ── eventos ────────────────────────────────────────────────
     events_str = _format_events(form.get("events", []))
 
-    escalation_rules = form.get("escalation_rules", {})
-    escalation_str = _format_escalation(escalation_rules)
-    escalation_msg = form.get("escalation_message", "Un momento, te voy a conectar con alguien de nuestro equipo que podrá ayudarte mejor. 🙏")
+    # ── escalación ─────────────────────────────────────────────
+    escalation_rules   = form.get("escalation_rules", {})
+    escalation_str     = _format_escalation(escalation_rules)
+    escalation_msg     = form.get("escalation_message", "Un momento, te voy a conectar con alguien de nuestro equipo que podrá ayudarte mejor.")
     escalation_contact = form.get("escalation_contact", phone)
+    large_group_threshold = (
+        escalation_rules.get("large_group_threshold", 13)
+        if escalation_rules.get("large_group")
+        else None
+    )
 
-    can_recommend = "Puedes sugerir platillos según las preferencias o restricciones del cliente." if form.get("can_recommend", True) else ""
-    show_prices = "Menciona precios cuando el cliente pregunte directamente." if form.get("show_prices", True) else "No menciones precios; indica al cliente que pregunte al staff."
+    # ── reservaciones ──────────────────────────────────────────
+    accepts_res = form.get("accepts_reservations", False)
+    max_p       = form.get("reservation_max_people", 12)
+    advance     = form.get("reservation_advance_hours", 2)
 
+    # ── contacto ───────────────────────────────────────────────
     contact_lines = [f"Teléfono: {phone}"] if phone else []
     if website:
         contact_lines.append(f"Sitio web: {website}")
@@ -505,54 +596,214 @@ def build_system_prompt(form: dict) -> str:
         contact_lines.append(f"Instagram: {instagram}")
     contact_str = "\n".join(contact_lines) if contact_lines else "Sin información de contacto adicional."
 
-    return f"""Eres {bot_name}, el asistente virtual de {name}, un {cuisine} ubicado en {location}.
+    # ══════════════════════════════════════════════════════════
+    # Construcción del prompt por secciones
+    # ══════════════════════════════════════════════════════════
 
-Tu función es atender a los clientes vía WhatsApp de manera {tone}, respondiendo preguntas sobre el menú, horarios, reservaciones y cualquier duda general sobre el restaurante. Nunca inventes información que no esté en este prompt.
+    # ── 1. Identidad ───────────────────────────────────────────
+    identity = (
+        f"Eres {bot_name}, el asistente virtual de {name}, {cuisine}"
+        + (f" ubicado en {location}" if location else "")
+        + ".\n"
+        "Tu función es atender a los clientes vía WhatsApp respondiendo preguntas sobre "
+        "el menú, horarios, reservaciones y cualquier duda sobre el restaurante. "
+        "Nunca inventes información que no esté en este prompt."
+    )
+
+    # ── 2. Idioma ──────────────────────────────────────────────
+    if language_key == "bilingual":
+        language_section = """---
+
+IDIOMA
+
+- Detecta automáticamente el idioma del cliente (español o inglés) desde su primer mensaje.
+- Responde siempre en el mismo idioma que el cliente usa.
+- Si el cliente mezcla idiomas, usa el predominante.
+- Mantén el mismo nivel de formalidad y calidez en ambos idiomas."""
+    elif language_key == "english":
+        language_section = "---\n\nIDIOMO\n\n- Respond always in English."
+    else:
+        language_section = "---\n\nIDIOMA\n\n- Responde siempre en español."
+
+    # ── 3. Tono y estilo ───────────────────────────────────────
+    tone_section = f"""---
+
+TONO Y ESTILO
+
+- Usa tratamiento de {pronoun} con cada cliente en todo momento.
+- Limita tus respuestas a {length_str}; si la información es extensa, divídela en bloques.
+- Actúa con calidez genuina: atento y preciso, nunca frío ni robótico.
+- Evita frases genéricas de chatbot: «¡Claro que sí!», «¡Por supuesto!», «¡Excelente pregunta!».
+- En su lugar, expresa calidez con naturalidad: «Con mucho gusto», «Será un placer», «Le esperamos».
+- Nunca empieces una respuesta repitiendo lo que el cliente acaba de decir.
+- Usa el nombre del cliente con moderación — máximo una vez por conversación."""
+
+    # ── 4. Información del restaurante ─────────────────────────
+    info_lines = [f"- Nombre: {name}", f"- Concepto: {cuisine}"]
+    if location:
+        info_lines.append(f"- Dirección: {location}")
+    if phone:
+        info_lines.append(f"- Teléfono: {phone}")
+    if instagram:
+        info_lines.append(f"- Instagram: {instagram}")
+    if website:
+        info_lines.append(f"- Sitio web: {website}")
+    info_section = "---\n\nINFORMACIÓN DEL RESTAURANTE\n\n" + "\n".join(info_lines)
+
+    # ── 5. Horarios ────────────────────────────────────────────
+    hours_section = f"---\n\nHORARIOS DE OPERACIÓN\n\n{hours_str}"
+
+    # ── 6. Menú ────────────────────────────────────────────────
+    menu_rules = []
+    if can_recommend:
+        menu_rules.append("- Puedes sugerir platillos según las preferencias o restricciones del cliente.")
+    if show_prices:
+        menu_rules.append("- Menciona precios cuando el cliente los pida directamente; no los menciones de forma espontánea.")
+    else:
+        menu_rules.append("- No menciones precios; indica al cliente que consulte directamente con el staff.")
+    menu_rules += [
+        "- Describe ingredientes y preparación cuando el cliente lo solicite.",
+        "- Nunca inventes platillos, precios ni especiales que no estén en este menú.",
+        "- Preguntas sobre alergias o restricciones específicas: remite siempre al equipo del restaurante.",
+    ]
+    menu_section = (
+        f"---\n\nMENÚ COMPLETO\n\n{menu_str}\n\n"
+        "CÓMO RESPONDER SOBRE EL MENÚ\n\n" + "\n".join(menu_rules)
+    )
+
+    # ── 7. Eventos ─────────────────────────────────────────────
+    events_section = f"---\n\nEVENTOS Y PROMOCIONES VIGENTES\n\n{events_str}"
+
+    # ── 8. Reservaciones ───────────────────────────────────────
+    if accepts_res:
+        large_group_rule = ""
+        if large_group_threshold:
+            large_group_rule = (
+                f"\n- Si el cliente solicita mesa para {large_group_threshold} o más personas: "
+                "escala a humano inmediatamente sin continuar el flujo."
+            )
+
+        closed_note = ""
+        if closed_days:
+            closed_note = (
+                f"\n- La función de confirmación rechazará fechas en días cerrados "
+                f"({', '.join(closed_days)}). Si eso ocurre, infórmalo al cliente con naturalidad."
+            )
+
+        reservation_section = f"""---
+
+FLUJO DE RESERVACIÓN
+
+Cuando el cliente desee reservar, recopila la información paso a paso, **una pregunta a la vez**. No hagas dos preguntas en el mismo mensaje.
+
+Datos obligatorios (en orden):
+1. Nombre completo
+2. Fecha deseada — acepta cualquier fecha sin rechazarla. La función validará si el restaurante abre ese día.{closed_note}
+3. Hora — convierte siempre a formato HH:MM de 24 horas. Nunca pidas aclaración de AM/PM; infiere según el contexto:
+   - «de la noche», «pm» → suma 12. Ej: «8 de la noche» → 20:00, «7 pm» → 19:00.
+   - «de la tarde» → suma 12 si la hora es entre 1 y 6. Ej: «2 de la tarde» → 14:00.
+   - «de la mañana», «am», «madrugada» → no sumes nada.
+   - Sin contexto AM/PM: si el restaurante abre en la tarde, asume PM para horas entre 1 y 11.
+4. Número de personas (máximo {max_p} por este canal).{large_group_rule}
+
+Preguntas adicionales obligatorias — SIEMPRE antes de confirmar:
+5. Zona preferida — pregunta si prefieren alguna zona (ej. terraza, comedor). Si no importa, usa «sin preferencia».
+6. Requisición especial — pregunta: «¿Tiene algún requerimiento especial?» Si no, usa «NINGUNA».
+
+REGLA CRÍTICA — CONFIRMACIÓN:
+Nunca digas «su reservación está confirmada» sin haber llamado primero a confirmar_reservacion y recibido respuesta exitosa. Si la función regresa ERROR, NO confirmes — informa al cliente del problema con naturalidad.
 
 ---
 
-HORARIOS DE OPERACIÓN:
-{hours_str}
+FLUJO DE MODIFICACIÓN
+
+Cuando el cliente quiera cambiar una reservación existente:
+1. Identifica la reservación (fecha y hora). Si no están claras en el contexto, pregunta.
+2. Pregunta qué desea cambiar — una cosa a la vez.
+3. Recoge el nuevo valor en el mismo formato (hora → HH:MM 24h, fecha → DD/MM/YYYY).
+4. Llama a modificar_reservacion con los datos originales y los campos nuevos.
+5. Confirma el cambio solo si la función regresa éxito. Si hay ERROR, informa al cliente.
+
+REGLA CRÍTICA — MODIFICACIÓN: Nunca confirmes un cambio sin llamar a modificar_reservacion y recibir éxito.
 
 ---
 
-MENÚ COMPLETO:
-{menu_str}
+FLUJO DE CANCELACIÓN
 
----
+Cuando el cliente quiera cancelar:
+1. Identifica la reservación (fecha y hora). Si no están claras, pregunta.
+2. Pide confirmación explícita: «¿Confirma que desea cancelar su reservación del [fecha] a las [hora]?»
+3. Solo si el cliente confirma: llama a cancelar_reservacion.
+4. Confirma la cancelación. Si hay error, informa al cliente."""
+    else:
+        reservation_section = (
+            "---\n\nRESERVACIONES\n\n"
+            "No aceptamos reservaciones. Los clientes son atendidos por orden de llegada."
+        )
 
-RESERVACIONES:
-{reservations_str}
+    # ── 9. Escalación ──────────────────────────────────────────
+    contact_note = f"\nContacto para escalación: {escalation_contact}" if escalation_contact else ""
+    escalation_section = f"""---
 
----
+ESCALACIÓN A HUMANO
 
-EVENTOS Y PROMOCIONES VIGENTES:
-{events_str}
+Cuando debas escalar, envía exactamente este mensaje:
+«{escalation_msg}»
 
----
+Escala en los siguientes casos:
+{escalation_str}{contact_note}"""
 
-REGLAS DE COMUNICACIÓN:
-- Responde siempre en {language}
-- Usa tratamiento {tone} en todo momento
-- Limita tus respuestas a {length}
-- {can_recommend}
-- {show_prices}
-- Nunca inventes precios, horarios, platillos ni información del restaurante
-- Si no sabes algo, dilo con honestidad y ofrece alternativas
+    # ── 10. Contacto ───────────────────────────────────────────
+    contact_section = f"---\n\nINFORMACIÓN DE CONTACTO\n\n{contact_str}"
 
----
+    # ── 11. Comportamientos prohibidos ─────────────────────────
+    prohibited = [
+        "- Nunca inventes platillos, precios, horarios ni información del restaurante.",
+        "- Nunca hagas más de una pregunta en el mismo mensaje durante cualquier flujo.",
+        f"- Nunca uses tratamiento distinto a {pronoun} salvo que el cliente lo pida explícitamente.",
+        "- Nunca respondas con más líneas de las indicadas a preguntas simples.",
+        "- Nunca cambies de idioma a mitad de conversación sin que el cliente lo solicite.",
+    ]
+    if accepts_res:
+        prohibited += [
+            "- Nunca confirmes una reserva, modificación o cancelación sin haber llamado a la función correspondiente y recibido éxito.",
+            "- Nunca rechaces ni cuestiones la hora o fecha que pida el cliente — acéptala siempre y conviértela al formato correcto.",
+        ]
+    prohibited_section = "---\n\nCOMPORTAMIENTOS PROHIBIDOS\n\n" + "\n".join(prohibited)
 
-ESCALACIÓN A HUMANO:
-Transfiere inmediatamente la conversación a un agente humano en estos casos:
-{escalation_str}
+    # ── 12. Saludo inicial ─────────────────────────────────────
+    if language_key == "bilingual":
+        greeting_section = (
+            "---\n\nSALUDO INICIAL\n\n"
+            f"En español: «Bienvenido a {name}. Es un placer recibirle. ¿En qué puedo asistirle hoy?»\n"
+            f"En inglés: «Welcome to {name}. It's a pleasure to have you here. How may I help you today?»"
+        )
+    elif language_key == "english":
+        greeting_section = (
+            "---\n\nINITIAL GREETING\n\n"
+            f"«Welcome to {name}. It's a pleasure to have you here. How may I help you today?»"
+        )
+    else:
+        greeting_section = (
+            "---\n\nSALUDO INICIAL\n\n"
+            f"«Bienvenido a {name}. Es un placer recibirle. ¿En qué puedo asistirle hoy?»"
+        )
 
-Cuando escales, envía exactamente este mensaje: "{escalation_msg}"
-Número de contacto para escalación: {escalation_contact}
-
----
-
-INFORMACIÓN DE CONTACTO:
-{contact_str}"""
+    sections = [
+        identity,
+        language_section,
+        tone_section,
+        info_section,
+        hours_section,
+        menu_section,
+        events_section,
+        reservation_section,
+        escalation_section,
+        contact_section,
+        prohibited_section,
+        greeting_section,
+    ]
+    return "\n\n".join(sections)
 
 
 # ─── Bot service control (EasyPanel) ─────────────────────────

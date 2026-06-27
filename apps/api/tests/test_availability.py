@@ -19,13 +19,13 @@ MESA_B4 = "bbbbbbbb-0004-0000-0000-000000000000"  # negocio B, 4 personas
 LAS_OCHO = datetime(2026, 6, 20, 20, 0, tzinfo=timezone.utc)
 
 
-def _mesa(mesa_id, business_id, nombre, capacidad, combinable=None, estancia=90):
+def _mesa(mesa_id, business_id, nombre, capacidad, combinable=None, estancia=90, zona="Interior"):
     return {
         "id": mesa_id,
         "business_id": business_id,
         "nombre": nombre,
         "capacidad": capacidad,
-        "zona": "Interior",
+        "zona": zona,
         "activo": True,
         "tiempo_promedio_estancia": estancia,
         "combinable_con": combinable or [],
@@ -226,6 +226,78 @@ def test_negocio_sin_mesas_configuradas_no_bloquea():
     assert resultado["sin_mesas_configuradas"] is True
     assert resultado["restaurante_lleno"] is False
     assert resultado["mesa_id"] is None
+
+
+# ─── Preferencia de zona ─────────────────────────────────────────────────────
+
+MESA_TERRAZA = "cccccccc-0002-0000-0000-000000000000"  # 2p, Terraza
+MESA_INTERIOR = "cccccccc-0004-0000-0000-000000000000"  # 4p, Interior
+
+
+def test_zona_prioriza_la_solicitada_aunque_sea_mayor_capacidad():
+    # Terraza(2p) e Interior(4p) libres; grupo de 2 pide Terraza.
+    # Sin zona elegiría la de 2 (Terraza) por capacidad; con zona también Terraza.
+    # El caso interesante: pedir Interior debe dar la de 4 aunque la de 2 sea menor.
+    db = FakeDB({
+        "tables": [
+            _mesa(MESA_TERRAZA, BIZ_A, "T1", 2, zona="Terraza"),
+            _mesa(MESA_INTERIOR, BIZ_A, "I1", 4, zona="Interior"),
+        ],
+        "reservations": [],
+    })
+
+    resultado = buscar_mesa_ideal(db, BIZ_A, personas=2, fecha_hora=LAS_OCHO, zona="interior")
+
+    assert resultado["mesa_id"] == MESA_INTERIOR
+    assert resultado["zona_asignada"] == "Interior"
+    assert resultado["zona_match"] is True
+
+
+def test_zona_acepta_sinonimo_comedor_como_interior():
+    db = FakeDB({
+        "tables": [
+            _mesa(MESA_TERRAZA, BIZ_A, "T1", 2, zona="Terraza"),
+            _mesa(MESA_INTERIOR, BIZ_A, "I1", 4, zona="Interior"),
+        ],
+        "reservations": [],
+    })
+
+    resultado = buscar_mesa_ideal(db, BIZ_A, personas=2, fecha_hora=LAS_OCHO, zona="comedor")
+
+    assert resultado["mesa_id"] == MESA_INTERIOR
+    assert resultado["zona_match"] is True
+
+
+def test_zona_llena_cae_a_otra_zona_y_marca_zona_match_false():
+    # Solo hay Interior libre; el cliente pide Terraza (que no tiene mesa libre).
+    # No se rechaza: cae a Interior, pero zona_match=False para que el bot avise.
+    db = FakeDB({
+        "tables": [
+            _mesa(MESA_TERRAZA, BIZ_A, "T1", 2, zona="Terraza"),
+            _mesa(MESA_INTERIOR, BIZ_A, "I1", 4, zona="Interior"),
+        ],
+        "reservations": [_reserva(BIZ_A, MESA_TERRAZA, LAS_OCHO)],
+    })
+
+    resultado = buscar_mesa_ideal(db, BIZ_A, personas=2, fecha_hora=LAS_OCHO, zona="terraza")
+
+    assert resultado["restaurante_lleno"] is False
+    assert resultado["mesa_id"] == MESA_INTERIOR
+    assert resultado["zona_asignada"] == "Interior"
+    assert resultado["zona_match"] is False
+
+
+def test_sin_zona_mantiene_comportamiento_y_zona_match_true():
+    db = FakeDB({
+        "tables": [_mesa(MESA_INTERIOR, BIZ_A, "I1", 4, zona="Interior")],
+        "reservations": [],
+    })
+
+    resultado = buscar_mesa_ideal(db, BIZ_A, personas=2, fecha_hora=LAS_OCHO)
+
+    assert resultado["mesa_id"] == MESA_INTERIOR
+    assert resultado["zona_match"] is True
+    assert resultado["zona_solicitada"] is None
 
 
 # ─── get_ocupacion_actual ────────────────────────────────────────────────────

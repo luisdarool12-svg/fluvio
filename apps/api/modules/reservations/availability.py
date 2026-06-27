@@ -18,11 +18,43 @@ Reglas del motor:
 El cliente `db` (supabase) se recibe por parámetro y se usa duck-typed,
 lo que permite testear el motor sin conexión real a Supabase.
 """
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 ESTADOS_BLOQUEANTES = ["pendiente", "confirmada", "sentada"]
 DURACION_DEFAULT_MIN = 90
+
+# Vocabulario de zona: el cliente (vía bot) puede decir "comedor", "afuera",
+# etc.; las mesas guardan "Interior"/"Terraza"/"Barra". Se normaliza todo a
+# minúsculas sin acentos y se mapean sinónimos para comparar de forma robusta.
+_ZONA_SINONIMOS = {
+    "comedor": "interior",
+    "salon": "interior",
+    "adentro": "interior",
+    "dentro": "interior",
+    "afuera": "terraza",
+    "exterior": "terraza",
+    "patio": "terraza",
+}
+_ZONA_SIN_PREFERENCIA = {
+    "", "sin preferencia", "cualquiera", "cualquier", "indistinto",
+    "la que sea", "ninguna", "no", "da igual",
+}
+
+
+def _norm_zona(zona: Optional[str]) -> Optional[str]:
+    """
+    Normaliza una zona a minúsculas sin acentos y resuelve sinónimos.
+    Devuelve None cuando no hay preferencia real (para no filtrar).
+    """
+    if not zona:
+        return None
+    nfd = unicodedata.normalize("NFD", str(zona).strip().lower())
+    limpia = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+    if limpia in _ZONA_SIN_PREFERENCIA:
+        return None
+    return _ZONA_SINONIMOS.get(limpia, limpia)
 
 # Cuánto mirar hacia atrás al traer reservas: una reserva que empezó hace
 # horas puede seguir ocupando mesa si su estancia es larga.
@@ -95,6 +127,26 @@ def _mesas_ocupadas(
 
 
 def _elegir_mesa(
+    mesas: List[Dict], ocupadas: Set[str], personas: int,
+    zona: Optional[str] = None,
+) -> Optional[Tuple[str, List[str]]]:
+    """
+    Elige mesa respetando la zona pedida (ya normalizada) cuando se puede.
+
+    Si la zona solicitada está llena o no tiene mesa que alcance, cae a
+    cualquier zona: nunca se rechaza al cliente por su preferencia de zona —
+    mejor ofrecer otra zona que no dar mesa. `buscar_mesa_ideal` reporta en
+    `zona_match` si la mesa asignada quedó o no en la zona pedida.
+    """
+    if zona:
+        mesas_zona = [m for m in mesas if _norm_zona(m.get("zona")) == zona]
+        eleccion = _seleccionar(mesas_zona, ocupadas, personas)
+        if eleccion is not None:
+            return eleccion
+    return _seleccionar(mesas, ocupadas, personas)
+
+
+def _seleccionar(
     mesas: List[Dict], ocupadas: Set[str], personas: int
 ) -> Optional[Tuple[str, List[str]]]:
     """
@@ -172,9 +224,14 @@ def buscar_mesa_ideal(
     personas: int,
     fecha_hora: datetime,
     duracion_min: int = DURACION_DEFAULT_MIN,
+    zona: Optional[str] = None,
 ) -> Dict:
     """
     Busca la mesa óptima para un grupo en una fecha/hora dada.
+
+    `zona` es la preferencia del cliente (libre: "terraza", "comedor", "sin
+    preferencia", …); se normaliza y, si hay mesa en esa zona, se prioriza.
+    Si la zona pedida está llena, cae a otra zona (nunca rechaza por zona).
 
     Retorna:
       {
@@ -184,10 +241,15 @@ def buscar_mesa_ideal(
         "proxima_disponibilidad":   ISO datetime de la próxima hora con mesa, o None,
         "sin_mesas_configuradas":   True si el negocio aún no tiene mesas activas
                                     (el caller decide no bloquear reservas en ese caso),
+        "zona_solicitada":          la zona que pidió el cliente (tal cual), o None,
+        "zona_asignada":            la zona real de la mesa asignada, o None,
+        "zona_match":               True si la mesa quedó en la zona pedida (o no
+                                    se pidió zona); False si hubo que caer a otra,
       }
     """
     fecha_hora = _as_datetime(fecha_hora)
     fin = fecha_hora + timedelta(minutes=duracion_min)
+    zona_norm = _norm_zona(zona)
 
     mesas = _fetch_mesas(db, business_id)
     if not mesas:
@@ -197,6 +259,9 @@ def buscar_mesa_ideal(
             "restaurante_lleno": False,
             "proxima_disponibilidad": None,
             "sin_mesas_configuradas": True,
+            "zona_solicitada": zona,
+            "zona_asignada": None,
+            "zona_match": True,
         }
 
     mesas_por_id = {m["id"]: m for m in mesas}
@@ -207,16 +272,21 @@ def buscar_mesa_ideal(
     reservas = _fetch_reservas_ventana(db, business_id, fecha_hora, ventana_fin)
 
     ocupadas = _mesas_ocupadas(mesas_por_id, reservas, fecha_hora, fin)
-    eleccion = _elegir_mesa(mesas, ocupadas, personas)
+    eleccion = _elegir_mesa(mesas, ocupadas, personas, zona_norm)
 
     if eleccion is not None:
         mesa_id, combinadas = eleccion
+        zona_asignada = (mesas_por_id.get(mesa_id) or {}).get("zona")
+        zona_match = zona_norm is None or _norm_zona(zona_asignada) == zona_norm
         return {
             "mesa_id": mesa_id,
             "mesas_combinadas": combinadas,
             "restaurante_lleno": False,
             "proxima_disponibilidad": None,
             "sin_mesas_configuradas": False,
+            "zona_solicitada": zona,
+            "zona_asignada": zona_asignada,
+            "zona_match": zona_match,
         }
 
     proxima = _proxima_disponibilidad(
@@ -228,6 +298,9 @@ def buscar_mesa_ideal(
         "restaurante_lleno": True,
         "proxima_disponibilidad": proxima.isoformat() if proxima else None,
         "sin_mesas_configuradas": False,
+        "zona_solicitada": zona,
+        "zona_asignada": None,
+        "zona_match": zona_norm is None,
     }
 
 

@@ -5,6 +5,7 @@ import { createClient } from '@/utils/supabase/client'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 const META_APP_ID = process.env.NEXT_PUBLIC_META_APP_ID ?? ''
+const META_CONFIG_ID = process.env.NEXT_PUBLIC_META_CONFIG_ID ?? ''
 
 type Status = 'idle' | 'loading' | 'connected' | 'error'
 
@@ -29,10 +30,18 @@ interface FBLoginResponse {
   status: string
 }
 
+const FB_SDK_TIMEOUT_MS = 10000
+
 function loadFbSdk(appId: string): Promise<void> {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     if (typeof window.FB !== 'undefined') { resolve(); return }
+
+    const timer = setTimeout(() => {
+      reject(new Error('El SDK de Facebook no respondió. Revisa bloqueadores de anuncios o protección de rastreo.'))
+    }, FB_SDK_TIMEOUT_MS)
+
     window.fbAsyncInit = () => {
+      clearTimeout(timer)
       window.FB.init({ appId, version: 'v22.0', xfbml: false, cookie: false })
       resolve()
     }
@@ -40,6 +49,10 @@ function loadFbSdk(appId: string): Promise<void> {
     script.src = 'https://connect.facebook.net/en_US/sdk.js'
     script.async = true
     script.defer = true
+    script.onerror = () => {
+      clearTimeout(timer)
+      reject(new Error('No se pudo descargar el SDK de Facebook (bloqueado por el navegador o sin red).'))
+    }
     document.head.appendChild(script)
   })
 }
@@ -48,6 +61,7 @@ export default function EmbeddedSignup() {
   const [status, setStatus] = useState<Status>('idle')
   const [waStatus, setWaStatus] = useState<WhatsAppStatus | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
+  const [loadingMsg, setLoadingMsg] = useState('')
   const sessionInfoRef = useRef<{ waba_id: string; phone_number_id: string } | null>(null)
 
   const getToken = useCallback(async () => {
@@ -104,20 +118,24 @@ export default function EmbeddedSignup() {
     }
     setStatus('loading')
     setErrorMsg('')
+    setLoadingMsg('Cargando SDK de Meta…')
     sessionInfoRef.current = null
 
     try {
       await loadFbSdk(META_APP_ID)
-    } catch {
-      setErrorMsg('No se pudo cargar el SDK de Facebook')
+    } catch (e: unknown) {
+      setErrorMsg(e instanceof Error ? e.message : 'No se pudo cargar el SDK de Facebook')
       setStatus('error')
       return
     }
 
+    setLoadingMsg('SDK cargado. Abriendo ventana de Meta… Si no aparece, el navegador la está bloqueando (revisa el ícono de popup en la barra de direcciones).')
+
     window.FB.login(async (response: FBLoginResponse) => {
       const code = response.authResponse?.code
       if (!code) {
-        setStatus('idle')
+        setErrorMsg('La ventana de Meta se cerró sin completar la autorización. Si no viste ningún popup, el navegador lo está bloqueando.')
+        setStatus('error')
         return
       }
 
@@ -146,15 +164,21 @@ export default function EmbeddedSignup() {
         setErrorMsg(e instanceof Error ? e.message : 'Error desconocido')
         setStatus('error')
       }
-    }, {
-      scope: 'whatsapp_business_management,whatsapp_business_messaging',
-      response_type: 'code',
-      override_default_response_type: true,
-      extras: {
-        featureType: '',
-        sessionInfoVersion: '3',
-      },
-    })
+    }, META_CONFIG_ID
+      ? {
+          // Flujo actual de Meta: requiere una Configuración de Facebook Login for Business
+          config_id: META_CONFIG_ID,
+          response_type: 'code',
+          override_default_response_type: true,
+          extras: { setup: {}, featureType: '', sessionInfoVersion: '3' },
+        }
+      : {
+          // Fallback legacy por scopes (Meta puede rechazarlo en apps de negocio)
+          scope: 'whatsapp_business_management,whatsapp_business_messaging',
+          response_type: 'code',
+          override_default_response_type: true,
+          extras: { featureType: '', sessionInfoVersion: '3' },
+        })
   }
 
   const handleDisconnect = async () => {
@@ -267,6 +291,11 @@ export default function EmbeddedSignup() {
               </>
           }
         </button>
+        {status === 'loading' && loadingMsg && (
+          <div style={{ fontSize: 12.5, color: 'var(--ink-2)', maxWidth: 360, lineHeight: 1.5 }}>
+            {loadingMsg}
+          </div>
+        )}
       </div>
 
       <div style={{ fontSize: 12.5, color: 'var(--ink-3, #9ca3af)', lineHeight: 1.6 }}>

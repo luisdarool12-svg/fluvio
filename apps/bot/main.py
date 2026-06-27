@@ -1,5 +1,6 @@
 import os
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional
@@ -11,11 +12,28 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from agent import handle_message, get_business, _db, pause_business, resume_business, is_paused, _paused_businesses
+from whatsapp_send import send_whatsapp_cloud
+from scheduler import (
+    start_scheduler, stop_scheduler,
+    pending_reminders, pending_confirmations,
+)
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 TZ = ZoneInfo("America/Mexico_City")
-app = FastAPI(title="Fluvio WhatsApp Bot")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Arranca el scheduler de mensajes proactivos (anti-no-show) dentro del bot.
+    start_scheduler()
+    try:
+        yield
+    finally:
+        stop_scheduler()
+
+
+app = FastAPI(title="Fluvio WhatsApp Bot", lifespan=lifespan)
 
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
 _INTERNAL_SECRET = os.getenv("INTERNAL_JOB_SECRET", "")
@@ -62,26 +80,10 @@ async def receive_message(request: Request):
             if reply:
                 biz = get_business(phone_num_id)
                 biz_token = (biz or {}).get("whatsapp_access_token")
-                await _send_whatsapp_cloud(from_number, reply, phone_num_id, biz_token)
+                await send_whatsapp_cloud(from_number, reply, phone_num_id, biz_token)
     except Exception as e:
         print(f"[webhook] ERROR: {type(e).__name__}: {e}")
     return {"status": "ok"}
-
-
-async def _send_whatsapp_cloud(
-    to: str, text: str, phone_num_id: str, access_token: str | None = None
-):
-    import httpx
-    # Usa el token del negocio si existe; si no, cae al token global del env.
-    token = access_token or os.getenv("WHATSAPP_TOKEN", "")
-    url = f"https://graph.facebook.com/v20.0/{phone_num_id}/messages"
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            url,
-            json={"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": text}},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        print(f"[send] status={resp.status_code} body={resp.text}")
 
 
 # ─── Endpoint interno para Baileys bridge ────────────────────────────────────
@@ -153,12 +155,12 @@ async def flush_outbox(_: None = Depends(_verify_internal)):
             continue
         phone_num_id = biz.data[0]["telefono_whatsapp"]
         biz_token = biz.data[0].get("whatsapp_access_token")
-        try:
-            await _send_whatsapp_cloud(item["phone"], item["content"], phone_num_id, biz_token)
+        result = await send_whatsapp_cloud(item["phone"], item["content"], phone_num_id, biz_token)
+        if result["ok"]:
             db.table("outbox").update({"sent": True}).eq("id", item["id"]).execute()
             sent_count += 1
-        except Exception as e:
-            print(f"[outbox/flush] Error enviando a {item['phone']}: {e}")
+        else:
+            print(f"[outbox/flush] No se pudo enviar a {item['phone']}: {result['body'][:160]}")
             error_count += 1
 
     return {"sent": sent_count, "errors": error_count}
@@ -177,18 +179,8 @@ def get_pending_reminders(business_phone_number_id: str, _: None = Depends(_veri
         return {"items": []}
 
     db = _db()
-    now_mx   = datetime.now(TZ)
-    win_min  = now_mx + timedelta(minutes=90)
-    win_max  = now_mx + timedelta(minutes=150)
-
-    result = db.table("reservations").select(
-        "id,fecha_hora,personas,zona,reservations_customers:customer_id(nombre,telefono,jid)"
-    ).eq("business_id", business["id"]).eq("reminder_sent", False).neq(
-        "estado", "cancelada"
-    ).gte("fecha_hora", win_min.isoformat()).lte("fecha_hora", win_max.isoformat()).execute()
-
     items = []
-    for r in result.data:
+    for r in pending_reminders(db, business["id"]):
         cust = r.get("reservations_customers") or {}
         dt_mx = datetime.fromisoformat(r["fecha_hora"]).astimezone(TZ)
         items.append({
@@ -212,7 +204,7 @@ def mark_reminder_sent(reservation_id: str, _: None = Depends(_verify_internal))
 # ─── Confirmaciones (24h antes) ───────────────────────────────────────────────
 
 @app.get("/internal/confirmations/{business_phone_number_id}")
-def get_pending_confirmations(business_phone_number_id: str):
+def get_pending_confirmations(business_phone_number_id: str, _: None = Depends(_verify_internal)):
     """
     Retorna reservaciones que deben recibir mensaje de confirmación
     entre 23 y 25 horas antes.
@@ -222,18 +214,8 @@ def get_pending_confirmations(business_phone_number_id: str):
         return {"items": []}
 
     db = _db()
-    now_mx  = datetime.now(TZ)
-    win_min = now_mx + timedelta(hours=23)
-    win_max = now_mx + timedelta(hours=25)
-
-    result = db.table("reservations").select(
-        "id,fecha_hora,personas,reservations_customers:customer_id(nombre,telefono,jid)"
-    ).eq("business_id", business["id"]).eq("confirmation_sent", False).eq(
-        "estado", "pendiente"
-    ).gte("fecha_hora", win_min.isoformat()).lte("fecha_hora", win_max.isoformat()).execute()
-
     items = []
-    for r in result.data:
+    for r in pending_confirmations(db, business["id"]):
         cust = r.get("reservations_customers") or {}
         dt_mx = datetime.fromisoformat(r["fecha_hora"]).astimezone(TZ)
         items.append({

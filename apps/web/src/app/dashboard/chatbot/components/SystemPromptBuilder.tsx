@@ -1,8 +1,8 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   ChevronDown, ChevronRight, CheckCircle2, AlertCircle, Sparkles, Save,
-  Plus, Trash2, History, RotateCcw, Loader2,
+  Plus, Trash2, History, RotateCcw, Loader2, Upload, FileText, ImageIcon,
 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
@@ -20,6 +20,24 @@ async function apiFetch(path: string, init?: RequestInit) {
 
 async function apiJson(path: string, init?: RequestInit) {
   const r = await apiFetch(path, init)
+  if (!r.ok) {
+    const e = await r.json().catch(() => null)
+    throw new Error(`${r.status}: ${e?.detail ?? r.statusText}`)
+  }
+  return r.json()
+}
+
+async function apiUploadFile(path: string, file: File) {
+  const supabase = createClient()
+  const { data } = await supabase.auth.getSession()
+  const token = data.session?.access_token ?? ''
+  const fd = new FormData()
+  fd.append('file', file)
+  const r = await fetch(`${API}${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  })
   if (!r.ok) {
     const e = await r.json().catch(() => null)
     throw new Error(`${r.status}: ${e?.detail ?? r.statusText}`)
@@ -169,11 +187,23 @@ export function SystemPromptBuilder({ businessId }: { businessId: string | null 
   const [saved, setSaved] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
 
+  // ── Menu file upload state ────────────────────────────────────
+  const [menuTab, setMenuTab] = useState<'manual' | 'text' | 'upload'>('manual')
+  const [uploadingMenu, setUploadingMenu] = useState(false)
+  const [menuUploadFile, setMenuUploadFile] = useState<File | null>(null)
+  const [menuUploadPreview, setMenuUploadPreview] = useState<string | null>(null)
+  const [draggingFile, setDraggingFile] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     if (!businessId) return
     setErrors([])
     apiJson('/chatbot/config').then(data => {
-      if (data.prompt_form_data) setForm({ ...EMPTY_FORM, ...data.prompt_form_data })
+      if (data.prompt_form_data) {
+        setForm({ ...EMPTY_FORM, ...data.prompt_form_data })
+        const savedMode = data.prompt_form_data.menu_mode
+        if (savedMode === 'manual' || savedMode === 'text') setMenuTab(savedMode)
+      }
       if (data.bot_config?.system_prompt) setPrompt(data.bot_config.system_prompt)
       if (data.versions) setVersions(data.versions)
     }).catch((e: unknown) => setErrors([`No se pudo cargar la configuración — ${errMsg(e)}`]))
@@ -254,6 +284,48 @@ export function SystemPromptBuilder({ businessId }: { businessId: string | null 
       setErrors([`No se pudo estructurar el menú — ${errMsg(e)}`])
     } finally {
       setParsingMenu(false)
+    }
+  }
+
+  function handleMenuFileSelect(file: File | null) {
+    if (!file) return
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf']
+    if (!allowed.includes(file.type)) {
+      setErrors(['Solo se aceptan imágenes (JPG, PNG, WEBP) y archivos PDF'])
+      return
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setErrors(['El archivo no puede superar 20 MB'])
+      return
+    }
+    setMenuUploadFile(file)
+    setErrors([])
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader()
+      reader.onload = e => setMenuUploadPreview(e.target?.result as string)
+      reader.readAsDataURL(file)
+    } else {
+      setMenuUploadPreview(null)
+    }
+  }
+
+  async function handleMenuFileUpload() {
+    if (!menuUploadFile) return
+    setUploadingMenu(true)
+    setErrors([])
+    try {
+      const data = await apiUploadFile('/chatbot/config/parse-menu-file', menuUploadFile)
+      if (data.categories) {
+        upd('menu_categories', data.categories)
+        upd('menu_mode', 'manual')
+        setMenuTab('manual')
+        setMenuUploadFile(null)
+        setMenuUploadPreview(null)
+      }
+    } catch (e: unknown) {
+      setErrors([`No se pudo extraer el menú — ${errMsg(e)}`])
+    } finally {
+      setUploadingMenu(false)
     }
   }
 
@@ -384,20 +456,129 @@ export function SystemPromptBuilder({ businessId }: { businessId: string | null 
       <Section title="Menú" subtitle="Carga el menú para que el bot pueda responder sobre platillos y precios" open={!!open.menu} onToggle={() => toggleSection('menu')} complete={menuComplete} required>
         {/* Mode tabs */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 16, background: 'var(--surface-2)', borderRadius: 'var(--r)', padding: 4, width: 'fit-content' }}>
-          {(['manual', 'text'] as const).map(m => (
-            <button key={m} onClick={() => upd('menu_mode', m)} style={{
+          {([
+            ['manual', 'Carga manual'],
+            ['text', 'Texto libre'],
+            ['upload', 'Subir foto o PDF'],
+          ] as const).map(([m, label]) => (
+            <button key={m} onClick={() => {
+              setMenuTab(m)
+              if (m !== 'upload') upd('menu_mode', m)
+            }} style={{
               padding: '6px 14px', borderRadius: 'var(--r-sm)', border: 'none', cursor: 'pointer',
               fontSize: 13, fontWeight: 500,
-              background: form.menu_mode === m ? 'var(--surface)' : 'transparent',
-              color: form.menu_mode === m ? 'var(--ink)' : 'var(--ink-3)',
-              boxShadow: form.menu_mode === m ? 'var(--shadow-xs)' : 'none',
+              background: menuTab === m ? 'var(--surface)' : 'transparent',
+              color: menuTab === m ? 'var(--ink)' : 'var(--ink-3)',
+              boxShadow: menuTab === m ? 'var(--shadow-xs)' : 'none',
+              display: 'flex', alignItems: 'center', gap: 5,
             }}>
-              {m === 'manual' ? 'Carga manual' : 'Texto libre'}
+              {m === 'upload' && <Upload size={12} />}
+              {label}
             </button>
           ))}
         </div>
 
-        {form.menu_mode === 'text' ? (
+        {menuTab === 'upload' && (
+          <div>
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+              style={{ display: 'none' }}
+              onChange={e => handleMenuFileSelect(e.target.files?.[0] ?? null)}
+            />
+
+            {/* Drop zone */}
+            <div
+              onDragOver={e => { e.preventDefault(); setDraggingFile(true) }}
+              onDragLeave={() => setDraggingFile(false)}
+              onDrop={e => { e.preventDefault(); setDraggingFile(false); handleMenuFileSelect(e.dataTransfer.files[0]) }}
+              onClick={() => !menuUploadFile && fileInputRef.current?.click()}
+              style={{
+                border: `2px dashed ${draggingFile ? 'var(--accent)' : menuUploadFile ? 'var(--accent)' : 'var(--line)'}`,
+                borderRadius: 'var(--r-lg)',
+                padding: menuUploadFile ? '16px' : '36px 24px',
+                textAlign: 'center',
+                background: draggingFile ? 'var(--accent-soft)' : menuUploadFile ? 'var(--surface-2)' : 'var(--surface-2)',
+                cursor: menuUploadFile ? 'default' : 'pointer',
+                transition: 'all 0.15s',
+              }}
+            >
+              {menuUploadFile ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  {menuUploadPreview ? (
+                    // Image preview
+                    <div style={{ position: 'relative', flexShrink: 0 }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={menuUploadPreview}
+                        alt="Vista previa del menú"
+                        style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 'var(--r)', border: '1px solid var(--line)' }}
+                      />
+                    </div>
+                  ) : (
+                    <FileText size={40} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                  )}
+                  <div style={{ flex: 1, textAlign: 'left' }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink)', marginBottom: 2 }}>{menuUploadFile.name}</div>
+                    <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{(menuUploadFile.size / 1024).toFixed(0)} KB · {menuUploadFile.type.startsWith('image/') ? 'Imagen' : 'PDF'}</div>
+                  </div>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ flexShrink: 0 }}
+                    onClick={e => { e.stopPropagation(); setMenuUploadFile(null); setMenuUploadPreview(null) }}
+                  >
+                    <Trash2 size={13} />
+                    Cambiar
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginBottom: 10, opacity: 0.4 }}>
+                    <ImageIcon size={28} />
+                    <FileText size={28} />
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink)', marginBottom: 4 }}>
+                    Arrastra aquí tu menú o haz clic para seleccionar
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+                    JPG, PNG, WEBP o PDF · máx. 20 MB
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Extract button */}
+            {menuUploadFile && (
+              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleMenuFileUpload}
+                  disabled={uploadingMenu}
+                >
+                  {uploadingMenu
+                    ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Extrayendo menú…</>
+                    : <><Sparkles size={14} /> Extraer menú con IA</>
+                  }
+                </button>
+                {uploadingMenu && (
+                  <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+                    Claude está leyendo el archivo, puede tardar unos segundos…
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div style={{ marginTop: 12, fontSize: 12, color: 'var(--ink-4)', lineHeight: 1.5 }}>
+              <strong>Recomendaciones:</strong> fotografía con buena iluminación, sin reflejos, con el menú desplegado.
+              Para PDF, usa archivos digitales (no escaneados) para mejor precisión.
+              Después de extraer podrás editar cualquier platillo.
+            </div>
+          </div>
+        )}
+
+        {menuTab === 'text' && (
           <div>
             <textarea
               value={form.menu_text}
@@ -416,7 +597,9 @@ export function SystemPromptBuilder({ businessId }: { businessId: string | null 
               Estructurar con IA
             </button>
           </div>
-        ) : (
+        )}
+
+        {menuTab === 'manual' && (
           <div>
             {form.menu_categories.map((cat, ci) => (
               <div key={ci} style={{ marginBottom: 16, border: '1px solid var(--line)', borderRadius: 'var(--r)', overflow: 'hidden' }}>

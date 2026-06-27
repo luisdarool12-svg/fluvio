@@ -245,12 +245,16 @@ def save_reservation(
 
 def consultar_disponibilidad_api(
     business_id: str, personas: int, fecha_hora: datetime, duracion_min: int = 90,
+    zona: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Consulta el motor de disponibilidad. Devuelve None si el API no responde
     (fail-open: ante una falla técnica la reserva se acepta sin mesa asignada,
     como antes de existir el motor — nunca se rechaza a un cliente por un error
     de infraestructura).
+
+    `zona` es la preferencia del cliente (terraza/interior/sin preferencia); el
+    motor prioriza esa zona y cae a otra si está llena.
     """
     try:
         resp = httpx.post(
@@ -260,6 +264,7 @@ def consultar_disponibilidad_api(
                 "personas": personas,
                 "fecha_hora": fecha_hora.isoformat(),
                 "duracion_min": duracion_min,
+                "zona": zona,
             },
             headers={"X-Internal-Secret": os.getenv("INTERNAL_JOB_SECRET", "")},
             timeout=_AVAILABILITY_TIMEOUT_S,
@@ -281,12 +286,13 @@ def _disponibilidad_tool_result(business_id: str, tinput: dict) -> str:
     fecha = tinput.get("fecha", "")
     hora = tinput.get("hora", "")
     personas = tinput.get("personas", 2)
+    zona = tinput.get("zona")
 
     fecha_hora = _reserva_datetime(fecha, hora)
     if fecha_hora is None:
         return "ERROR: Formato de fecha u hora inválido. Pide al cliente fecha (DD/MM/YYYY) y hora (HH:MM) nuevamente."
 
-    disp = consultar_disponibilidad_api(business_id, personas, fecha_hora)
+    disp = consultar_disponibilidad_api(business_id, personas, fecha_hora, zona=zona)
     if disp is None or disp.get("sin_mesas_configuradas"):
         return (
             "AVISO: No fue posible verificar la disponibilidad en este momento. "
@@ -296,9 +302,15 @@ def _disponibilidad_tool_result(business_id: str, tinput: dict) -> str:
     if not disp.get("restaurante_lleno"):
         combinadas = disp.get("mesas_combinadas") or []
         extra = " (se unirán dos mesas para el grupo)" if combinadas else ""
+        zona_aviso = ""
+        if not disp.get("zona_match", True) and disp.get("zona_asignada"):
+            zona_aviso = (
+                f" No hay lugar en la zona solicitada; la mesa disponible está en "
+                f"{disp['zona_asignada']}. Avísale al cliente y pregúntale si le parece bien."
+            )
         return (
             f"DISPONIBLE: Sí hay mesa para {personas} persona(s) el {fecha} "
-            f"a las {hora}{extra}. Puedes continuar con la reservación."
+            f"a las {hora}{extra}.{zona_aviso} Puedes continuar con la reservación."
         )
 
     proxima = disp.get("proxima_disponibilidad")
@@ -423,6 +435,7 @@ TOOLS = [
                 "fecha":    {"type": "string",  "description": "Fecha en formato DD/MM/YYYY"},
                 "hora":     {"type": "string",  "description": "Hora en formato HH:MM (24 horas)"},
                 "personas": {"type": "integer", "description": "Número de personas"},
+                "zona":     {"type": "string",  "description": "Zona preferida: terraza, interior o sin preferencia. Inclúyela si el cliente expresó preferencia."},
             },
             "required": ["fecha", "hora", "personas"],
         },
@@ -442,7 +455,7 @@ TOOLS = [
                 "fecha":       {"type": "string",  "description": "Fecha en formato DD/MM/YYYY"},
                 "hora":        {"type": "string",  "description": "Hora en formato HH:MM (24 horas)"},
                 "personas":    {"type": "integer", "description": "Número de personas"},
-                "zona":        {"type": "string",  "description": "terraza, comedor o sin preferencia"},
+                "zona":        {"type": "string",  "description": "terraza, interior o sin preferencia"},
                 "requisicion": {"type": "string",  "description": "Requisición especial o NINGUNA"},
             },
             "required": ["nombre", "fecha", "hora", "personas", "zona", "requisicion"],
@@ -644,7 +657,7 @@ def handle_message(
                 mesas_combinadas: Optional[list] = None
                 fecha_hora = _reserva_datetime(tinput["fecha"], tinput["hora"])
                 disp = consultar_disponibilidad_api(
-                    business_id, tinput["personas"], fecha_hora
+                    business_id, tinput["personas"], fecha_hora, zona=tinput.get("zona")
                 ) if fecha_hora else None
 
                 if disp and disp.get("restaurante_lleno"):
@@ -672,6 +685,15 @@ def handle_message(
                             db, business_id, conv["id"], customer_phone, tinput, jid,
                             table_id=table_id, mesas_combinadas=mesas_combinadas,
                         )
+                        # Si la zona pedida estaba llena y se asignó otra, pídele a
+                        # Claude que se lo informe al cliente al confirmar.
+                        if disp and not disp.get("zona_match", True) and disp.get("zona_asignada"):
+                            tool_resp = (
+                                f"{tool_resp} NOTA: No había lugar en la zona que pidió el "
+                                f"cliente; se asignó una mesa en {disp['zona_asignada']}. "
+                                "Al confirmar, menciónalo con naturalidad por si prefiere "
+                                "cambiar de fecha u hora."
+                            )
                     except Exception as e:
                         print(f"[agent] Error guardando reservación: {e}")
                         tool_resp = (

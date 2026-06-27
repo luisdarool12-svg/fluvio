@@ -14,6 +14,16 @@ interface ReservationRowProps {
   onOpen?: (res: Reservation) => void
 }
 
+const ZONA_COLORS: Record<string, string> = {
+  terraza: '#0891b2',
+  interior: '#7c3aed',
+  barra:    '#b45309',
+}
+
+function zonaColor(zona: string): string {
+  return ZONA_COLORS[zona.toLowerCase()] ?? '#6b7280'
+}
+
 export function ReservationRow({ res, client: clientProp, onAction, onOpen }: ReservationRowProps) {
   const cl = clientProp ?? clientById(res.clientId)
   if (!cl) return null
@@ -36,12 +46,45 @@ export function ReservationRow({ res, client: clientProp, onAction, onOpen }: Re
         </div>
       </td>
       <td className="hide-sm">
+        <span className="faint" style={{ fontSize: 13 }}>{res.dayLabel ?? '—'}</span>
+      </td>
+      <td className="hide-sm">
         <span className="mono-num" style={{ fontWeight: 500 }}>{res.people}</span>{' '}
         <span className="faint">pers.</span>
       </td>
-      <td className="hide-sm"><span className="muted">{res.table}</span></td>
+      <td className="hide-sm">
+        <div className="col" style={{ gap: 2 }}>
+          <span className="muted">{res.table}</span>
+          {res.zona && (
+            <span style={{
+              fontSize: 11, fontWeight: 600, letterSpacing: '0.03em',
+              color: zonaColor(res.zona), textTransform: 'capitalize',
+            }}>
+              {res.zona}
+            </span>
+          )}
+        </div>
+      </td>
       <td className="hide-sm"><ChannelTag channel={res.channel} showLabel={false} /></td>
-      <td><StatusBadge status={res.status} /></td>
+      <td>
+        <div className="col" style={{ gap: 3, alignItems: 'flex-start' }}>
+          <StatusBadge status={res.status} />
+          {(res.reminderSent || res.confirmationSent) && (
+            <div className="row gap-4" style={{ marginTop: 2 }}>
+              {res.reminderSent && (
+                <span title="Recordatorio enviado" style={{ fontSize: 10, color: '#16a34a', fontWeight: 600, letterSpacing: '0.02em' }}>
+                  ✓ rec.
+                </span>
+              )}
+              {res.confirmationSent && (
+                <span title="Confirmación enviada" style={{ fontSize: 10, color: '#2563eb', fontWeight: 600, letterSpacing: '0.02em' }}>
+                  ✓ conf.
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </td>
       <td style={{ width: 150 }}><QuickActions res={res} onAction={onAction} /></td>
     </tr>
   )

@@ -3,8 +3,8 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Mexico_City")
 
-_DAYS_ES   = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"]
-_SHORT_ES  = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"]
+_DAYS_ES   = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+_SHORT_ES  = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 _MONTHS_ES = [
     "enero", "febrero", "marzo", "abril", "mayo", "junio",
     "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
@@ -13,11 +13,8 @@ _MONTHS_ES = [
 
 def _current_date_context() -> str:
     now = datetime.now(TZ)
-    day_name = _DAYS_ES[now.weekday() + 1 if now.weekday() < 6 else 0]
-    # weekday(): Mon=0 … Sun=6  →  Sun=0 … Sat=6 in our array
-    # Use isoweekday(): Mon=1 … Sun=7
-    idx = now.isoweekday() % 7  # Sun=0, Mon=1, … Sat=6
-    day_name = _DAYS_ES[idx]
+    # weekday(): Mon=0 … Sun=6  →  _DAYS_ES[0]=lunes … _DAYS_ES[6]=domingo
+    day_name = _DAYS_ES[now.weekday()]
     month_name = _MONTHS_ES[now.month - 1]
     return (
         f"Hoy es {day_name} {now.day} de {month_name} de {now.year} "
@@ -25,16 +22,52 @@ def _current_date_context() -> str:
     )
 
 
+def _fecha_relativa_context(today: date) -> str:
+    """
+    Pre-compute 'este/próximo [día]' tables so Claude reads exact dates
+    instead of deriving them from the calendar (which caused off-by-one errors
+    when today is the same weekday the customer mentions).
+    """
+    # _DAYS_ES indexed by weekday(): Mon=0 … Sun=6
+    lines = [
+        "RESOLUCIÓN DE FECHAS RELATIVAS (úsalas directamente — no calcules):",
+        f"  hoy           → {today.strftime('%d/%m/%Y')}",
+        f"  mañana        → {(today + timedelta(days=1)).strftime('%d/%m/%Y')}",
+        f"  pasado mañana → {(today + timedelta(days=2)).strftime('%d/%m/%Y')}",
+        "",
+        "  «este [día]» = primer [día] desde hoy (inclusivo, puede ser hoy mismo):",
+    ]
+    for wd in range(7):
+        days_until = (wd - today.weekday()) % 7
+        d = today + timedelta(days=days_until)
+        closed = "  ← CERRADO, avísale al cliente" if wd == 0 else ""
+        today_mark = " (HOY)" if d == today else ""
+        lines.append(
+            f"    este {_DAYS_ES[wd]:<12} → {d.strftime('%d/%m/%Y')}{today_mark}{closed}"
+        )
+
+    lines += [
+        "",
+        "  «el próximo [día]» = siempre la semana SIGUIENTE a «este [día]»:",
+    ]
+    for wd in range(7):
+        days_until = (wd - today.weekday()) % 7
+        proximo = today + timedelta(days=days_until + 7)
+        closed = "  ← CERRADO, avísale al cliente" if wd == 0 else ""
+        lines.append(
+            f"    el próximo {_DAYS_ES[wd]:<8} → {proximo.strftime('%d/%m/%Y')}{closed}"
+        )
+
+    return "\n".join(lines)
+
+
 def _calendar_context(days: int = 60) -> str:
-    today = date.today()
-    # Use Mexico City "today" to avoid UTC drift
     today = datetime.now(TZ).date()
     entries = []
     for i in range(days + 1):
         d = today + timedelta(days=i)
-        idx = d.isoweekday() % 7  # Sun=0 … Sat=6
-        short = _SHORT_ES[idx]
-        closed = " CERRADO" if d.weekday() == 0 else ""  # Monday
+        short = _SHORT_ES[d.weekday()]
+        closed = " CERRADO" if d.weekday() == 0 else ""
         entries.append(f"{d.strftime('%d/%m/%Y')}({short}{closed})")
     return ", ".join(entries)
 
@@ -49,13 +82,14 @@ def get_system_prompt(business: dict) -> str:
     bot_config: dict = business.get("bot_config") or {}
     static_prompt: str = bot_config.get("system_prompt", "")
 
+    today = datetime.now(TZ).date()
     dynamic_header = (
         f"FECHA ACTUAL: {_current_date_context()} "
-        f"Usa esta fecha como referencia para calcular \"hoy\", \"mañana\", "
-        f"\"el viernes\", \"la próxima semana\", etc.\n\n"
-        f"CALENDARIO DE LOS PRÓXIMOS 60 DÍAS (úsalo para resolver referencias "
-        f"como \"el próximo viernes\" o \"este sábado\"):\n"
+        f"Usa esta fecha como referencia para calcular fechas relativas.\n\n"
+        f"{_fecha_relativa_context(today)}\n\n"
+        f"CALENDARIO DE LOS PRÓXIMOS 60 DÍAS (úsalo para confirmar cualquier fecha "
+        f"o encontrar la disponibilidad del restaurante):\n"
         f"{_calendar_context()}"
     )
 
-    return f"{static_prompt}\n\n{dynamic_header}"
+    return f"{dynamic_header}\n\n{static_prompt}"

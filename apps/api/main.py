@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import create_client
 
-from routers import reservations, customers, tables, chatbot, business, campaigns, whatsapp_setup
+from routers import reservations, customers, tables, chatbot, business, campaigns, whatsapp_setup, billing
 from jobs.noshow import run_nightly_noshow_check
 from modules.reservations.availability import DURACION_DEFAULT_MIN, buscar_mesa_ideal
 from modules.floor_plan.availability import TZ_DEFAULT, revert_expired_overrides
@@ -39,6 +40,7 @@ app.include_router(chatbot.router, prefix="/chatbot", tags=["chatbot"])
 app.include_router(business.router, prefix="/business", tags=["business"])
 app.include_router(campaigns.router, prefix="/campaigns", tags=["campaigns"])
 app.include_router(whatsapp_setup.router, prefix="/whatsapp/setup", tags=["whatsapp"])
+app.include_router(billing.router, prefix="/billing", tags=["billing"])
 
 
 def _verify_internal_secret(x_internal_secret: str) -> None:
@@ -78,6 +80,7 @@ class InternalAvailabilityQuery(BaseModel):
     personas: int = Field(ge=1)
     fecha_hora: datetime
     duracion_min: int = Field(default=DURACION_DEFAULT_MIN, ge=15, le=480)
+    zona: Optional[str] = None
 
 
 @app.post("/internal/availability")
@@ -95,7 +98,8 @@ def internal_availability(
     if fecha_hora.tzinfo is None:
         fecha_hora = fecha_hora.replace(tzinfo=TZ_DEFAULT)
     return buscar_mesa_ideal(
-        _service_db(), body.business_id, body.personas, fecha_hora, body.duracion_min
+        _service_db(), body.business_id, body.personas, fecha_hora,
+        body.duracion_min, body.zona,
     )
 
 

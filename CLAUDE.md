@@ -27,7 +27,7 @@ Piloto: Dublé Bistró (León, Gto.). Escalable a cualquier negocio sin cambios 
 ```bash
 cd apps/web
 npm install
-npm run dev          # http://localhost:3001
+npm run dev          # http://localhost:3002 (puerto fijado en package.json)
 npm run build
 npm run lint
 ```
@@ -61,7 +61,7 @@ El bridge envía mensajes al bot vía `POST /internal/process` con el header `X-
 
 ## Variables de entorno
 
-Todas se leen desde `.env` en la raíz de `platform/`. Las tres apps cargan el mismo archivo.
+Todas se leen desde `.env` en la raíz de `app/`. Las tres apps cargan el mismo archivo.
 
 | Variable | Quién la usa | Dónde obtenerla |
 |---|---|---|
@@ -74,9 +74,10 @@ Todas se leen desde `.env` en la raíz de `platform/`. Las tres apps cargan el m
 | `WHATSAPP_VERIFY_TOKEN` | bot | definido por ti, registrado en Meta |
 | `WHATSAPP_PHONE_NUMBER_ID` | bot | Meta for Developers |
 | `INTERNAL_JOB_SECRET` | api, bot | valor aleatorio; enviado como header `X-Internal-Secret` |
-| `FRONTEND_URL` | api (CORS) | URL del dashboard, ej. `http://localhost:3001` |
+| `FRONTEND_URL` | api (CORS) | URL del dashboard, ej. `http://localhost:3002` |
 | `BOT_API_URL` | baileys bridge | URL del bot, ej. `http://localhost:8001` |
-| `API_URL` | bot | URL del API, ej. `http://localhost:8000` — el bot consulta `POST /internal/availability` (motor de mesas) ahí; si el API no responde, el bot hace fail-open (acepta la reserva sin mesa asignada) |
+| `API_URL` | bot | URL del API, ej. `http://localhost:8000` — el bot consulta `POST /internal/availability` (motor de mesas) ahí; si el API no responde, el bot hace fail-open (acepta la reserva sin mesa asignada). El scheduler del bot también dispara `POST /internal/noshow/run` aquí cada hora |
+| `BOT_SCHEDULER_ENABLED` | bot | `true`/`false` (default `true`). Activa el scheduler in-process de mensajes proactivos (recordatorios, confirmaciones, flush de outbox, disparo horario de no-show). **Ponlo en `false` en dev si corres el bridge Baileys**, para no duplicar envíos |
 
 ---
 
@@ -114,6 +115,18 @@ Cliente WhatsApp
 
 Los endpoints `/internal/*` de `apps/bot/main.py` se comunican con el bridge Baileys y con el job nocturno. Se protegen con el header `X-Internal-Secret` verificado contra `INTERNAL_JOB_SECRET`. Usa el mismo secreto en el bridge y en el job nocturno (`apps/api/main.py` → `POST /internal/noshow/run` usa el mismo patrón con `X-Internal-Secret`).
 
+### Scheduler de mensajes proactivos (anti-no-show) — `apps/bot/scheduler.py`
+
+El bot arranca un `AsyncIOScheduler` (APScheduler) en su `lifespan` que envía por **WhatsApp Cloud API** y es **multi-tenant** (recorre todos los negocios activos, no un número hardcodeado). Reemplaza en producción a los pollers `setInterval` del bridge Baileys (legado/solo-dev). Jobs:
+- `reminders` (cada 60s) — recordatorio ~2h antes.
+- `confirmations` (cada 120s) — confirmación 24h antes (el cliente responde SÍ/NO; lo intercepta `agent.handle_message`).
+- `outbox_flush` (cada 30s) — vacía el `outbox` (mensajes que encola el job de no-show y el operador humano).
+- `noshow` (cada hora en el minuto 0) — dispara `POST {API_URL}/internal/noshow/run`.
+
+Se controla con `BOT_SCHEDULER_ENABLED` (default `true`). El envío vive en `apps/bot/whatsapp_send.py`, compartido con el webhook.
+
+> **Restricción de WhatsApp Cloud API:** los mensajes proactivos fuera de la ventana de servicio de 24h requieren una **plantilla aprobada** por Meta; el texto libre se rechaza (errores 131047/131026). Dentro de la ventana (el cliente escribió en las últimas 24h) el texto libre funciona. `send_whatsapp_cloud` distingue rechazo definitivo (no reintenta) de falla transitoria (reintenta). Para confirmaciones a 24h en producción real hace falta registrar plantillas.
+
 ### Sistema de no-show scoring
 
 `apps/api/modules/reservations/scoring.py` calcula un score 0-100 (mayor = más riesgo) considerando:
@@ -128,6 +141,7 @@ Los endpoints `/internal/*` de `apps/bot/main.py` se comunican con el bridge Bai
 
 `apps/api/modules/reservations/availability.py` decide si hay mesa para un grupo:
 - `buscar_mesa_ideal()` — mesa libre de menor capacidad suficiente; si no alcanza, combina pares vía `tables.combinable_con`; si está lleno devuelve `proxima_disponibilidad`.
+- **Preferencia de zona:** `buscar_mesa_ideal(..., zona=)` prioriza mesas de la zona pedida. La zona se normaliza (minúsculas, sin acentos, sinónimos: `comedor/salón→interior`, `afuera/patio→terraza`) y `sin preferencia/cualquiera/…` no filtra. Si la zona pedida está llena, **cae a otra zona** (nunca rechaza por zona) y reporta `zona_match=False` + `zona_asignada` para que el bot le avise al cliente. El bot pasa la zona en `consultar_disponibilidad` y `confirmar_reservacion`.
 - Una reserva bloquea su mesa `tables.tiempo_promedio_estancia` minutos; las combinaciones bloquean todas sus mesas vía `reservations.mesas_combinadas`.
 - Consumidores: dashboard (`GET /tables/availability`, JWT) y bot (`POST /internal/availability`, X-Internal-Secret). El bot hace **fail-open**: si el API no responde, acepta la reserva sin mesa (nunca rechaza clientes por fallas técnicas).
 
@@ -182,9 +196,9 @@ El modelo `businesses.bot_config` es un JSONB que contiene `system_prompt`, `goo
 ## Estructura real del monorepo
 
 ```
-platform/
+app/                        ← este directorio
 ├── apps/
-│   ├── web/                → Next.js 14, puerto 3001
+│   ├── web/                → Next.js 14, puerto 3002
 │   │   └── src/
 │   │       ├── app/dashboard/  → chatbot, clientes, configuracion, mesas, reservaciones, riesgo
 │   │       ├── components/     → Sidebar, Topbar, StatCard, ReservationDrawer, etc.
@@ -201,7 +215,7 @@ platform/
 │       └── baileys-bridge/ → Node.js, recibe mensajes de WhatsApp vía Baileys
 ├── packages/
 │   └── database/migrations/ → SQLs numerados, ejecutar en Supabase Studio
-└── docs/                   → roadmap, arquitectura, runbooks
+(docs de arquitectura movidos a docs/ raíz del workspace)
 ```
 
 ---

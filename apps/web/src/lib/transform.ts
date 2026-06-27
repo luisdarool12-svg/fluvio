@@ -29,6 +29,9 @@ export function toReservation(row: any): Reservation {
     notes: row.notas ?? '',
     date: fecha.toISOString().split('T')[0],
     dayLabel: dayLabel(fecha),
+    zona: row.zona ?? undefined,
+    reminderSent: row.reminder_sent ?? false,
+    confirmationSent: row.confirmation_sent ?? false,
   }
 }
 

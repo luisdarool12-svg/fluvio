@@ -84,6 +84,9 @@ export interface Reservation {
   notes: string
   date?: string
   dayLabel?: string
+  zona?: string
+  reminderSent?: boolean
+  confirmationSent?: boolean
 }
 
 export interface FeedEvent {
