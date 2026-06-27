@@ -56,6 +56,11 @@ def _service_db():
     )
 
 
+@app.get("/debug-cors")
+def debug_cors():
+    return {"frontend_url": _frontend, "env": os.getenv("ENV"), "origins": _origins}
+
+
 @app.post("/internal/noshow/run")
 def trigger_noshow_check(x_internal_secret: str = Header(default="")):
     """
