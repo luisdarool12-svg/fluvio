@@ -2,18 +2,7 @@
 import { useState, useEffect } from 'react'
 import { MessageSquare, Send, Bot, UserRound, AlertTriangle } from 'lucide-react'
 import { StatCard } from '@/components/StatCard'
-import { createClient } from '@/utils/supabase/client'
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-
-async function apiFetch(path: string) {
-  const supabase = createClient()
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token ?? ''
-  return fetch(`${API}${path}`, {
-    headers: { 'Authorization': `Bearer ${token}` },
-  })
-}
+import { apiFetch } from '@/lib/api'
 
 interface DayPoint { date: string; count: number }
 

@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from supabase import create_client
@@ -34,7 +35,7 @@ def get_settings(business_id: str = Depends(get_business_id)):
     db = get_supabase()
     result = (
         db.table("businesses")
-        .select("id, nombre, zona_horaria, idioma_default, telefono_whatsapp, bot_config")
+        .select("id, nombre, zona_horaria, idioma_default, telefono_whatsapp, bot_config, whatsapp_connected")
         .eq("id", business_id)
         .single()
         .execute()
@@ -44,6 +45,26 @@ def get_settings(business_id: str = Depends(get_business_id)):
 
     biz = result.data
     bot_config = biz.get("bot_config") or {}
+
+    # Campo de expiración de token (migración 014 — puede no existir aún)
+    token_days_left: Optional[int] = None
+    token_warning = False
+    try:
+        exp_result = (
+            db.table("businesses")
+            .select("whatsapp_token_expires_at")
+            .eq("id", business_id)
+            .single()
+            .execute()
+        )
+        token_expires_raw = (exp_result.data or {}).get("whatsapp_token_expires_at")
+        if token_expires_raw:
+            expires_dt = datetime.fromisoformat(token_expires_raw.replace("Z", "+00:00"))
+            delta = expires_dt - datetime.now(timezone.utc)
+            token_days_left = max(0, delta.days)
+            token_warning = token_days_left <= 7
+    except Exception:
+        pass
 
     return {
         "nombre": biz.get("nombre", ""),
@@ -56,6 +77,9 @@ def get_settings(business_id: str = Depends(get_business_id)):
         "notif_nueva_reserva": bot_config.get("notif_nueva_reserva", True),
         "notif_alerta_noshow": bot_config.get("notif_alerta_noshow", True),
         "notif_resumen_semanal": bot_config.get("notif_resumen_semanal", False),
+        "whatsapp_connected": bool(biz.get("whatsapp_connected")),
+        "whatsapp_token_days_left": token_days_left,
+        "whatsapp_token_warning": token_warning,
     }
 
 

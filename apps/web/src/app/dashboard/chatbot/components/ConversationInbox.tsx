@@ -3,10 +3,9 @@ import { useState, useEffect, useRef } from 'react'
 import { Send, CheckCheck, Bot, UserRound } from 'lucide-react'
 import { Avatar } from '@/components/Avatar'
 import { EmptyState } from '@/components/EmptyState'
-import { createClient } from '@/utils/supabase/client'
 import { ModeToggle } from './ModeToggle'
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+import { apiFetch } from '@/lib/api'
+import { createClient } from '@/utils/supabase/client'
 
 interface Conversation {
   id: number
@@ -37,16 +36,6 @@ function timeAgo(iso: string | null): string {
   const hrs = Math.floor(mins / 60)
   if (hrs < 24) return `${hrs}h`
   return `${Math.floor(hrs / 24)}d`
-}
-
-async function apiFetch(path: string, init?: RequestInit) {
-  const supabase = createClient()
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token ?? ''
-  return fetch(`${API}${path}`, {
-    ...init,
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...init?.headers },
-  })
 }
 
 export function ConversationInbox({ businessId }: { businessId: string | null }) {

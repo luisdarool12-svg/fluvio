@@ -1,9 +1,8 @@
 'use client'
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { CheckCircle, AlertCircle, Loader } from 'lucide-react'
-import { createClient } from '@/utils/supabase/client'
+import { apiFetch } from '@/lib/api'
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 const META_APP_ID = process.env.NEXT_PUBLIC_META_APP_ID ?? ''
 const META_CONFIG_ID = process.env.NEXT_PUBLIC_META_CONFIG_ID ?? ''
 
@@ -64,32 +63,20 @@ export default function EmbeddedSignup() {
   const [loadingMsg, setLoadingMsg] = useState('')
   const sessionInfoRef = useRef<{ waba_id: string; phone_number_id: string } | null>(null)
 
-  const getToken = useCallback(async () => {
-    const supabase = createClient()
-    const { data } = await supabase.auth.getSession()
-    return data.session?.access_token ?? ''
-  }, [])
-
   // Cargar estado inicial
   useEffect(() => {
     let cancelled = false
-    getToken().then(async token => {
-      if (!token) return
-      try {
-        const res = await fetch(`${API}/whatsapp/setup/status`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (res.ok) {
-          const data: WhatsAppStatus = await res.json()
-          if (!cancelled) {
-            setWaStatus(data)
-            setStatus(data.connected ? 'connected' : 'idle')
-          }
+    apiFetch('/whatsapp/setup/status')
+      .then(res => res.ok ? res.json() : null)
+      .then((data: WhatsAppStatus | null) => {
+        if (!cancelled && data) {
+          setWaStatus(data)
+          setStatus(data.connected ? 'connected' : 'idle')
         }
-      } catch { /* network error — keep idle */ }
-    })
+      })
+      .catch(() => { /* network error — keep idle */ })
     return () => { cancelled = true }
-  }, [getToken])
+  }, [])
 
   // Listener para session info del flujo Embedded Signup
   useEffect(() => {
@@ -147,10 +134,8 @@ export default function EmbeddedSignup() {
       }
 
       try {
-        const token = await getToken()
-        const res = await fetch(`${API}/whatsapp/setup/callback`, {
+        const res = await apiFetch('/whatsapp/setup/callback', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ code, waba_id: info.waba_id, phone_number_id: info.phone_number_id }),
         })
         if (!res.ok) {
@@ -184,11 +169,7 @@ export default function EmbeddedSignup() {
   const handleDisconnect = async () => {
     setStatus('loading')
     try {
-      const token = await getToken()
-      await fetch(`${API}/whatsapp/setup/disconnect`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      await apiFetch('/whatsapp/setup/disconnect', { method: 'DELETE' })
       setWaStatus(null)
       setStatus('idle')
     } catch {

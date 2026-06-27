@@ -6,24 +6,9 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
-import { createClient } from '@/utils/supabase/client'
 import { NuevaCFDIModal } from './components/NuevaCFDIModal'
 import { ConfigFiscalModal } from './components/ConfigFiscalModal'
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-
-async function apiFetch(path: string, init?: RequestInit) {
-  const { data } = await createClient().auth.getSession()
-  const token = data.session?.access_token ?? ''
-  return fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-  })
-}
+import { apiFetch } from '@/lib/api'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

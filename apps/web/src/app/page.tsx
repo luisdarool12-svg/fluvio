@@ -4,9 +4,9 @@ import { useEffect, useState } from 'react'
 import { Logo } from '@/components/Logo'
 
 /* ── Valores editables ───────────────────────────────────────────────
-   Número de WhatsApp y precios del plan. Cambia WHATSAPP_NUMBER por la
-   línea real de Fluvio cuando la tengas (hoy usa la de Dublé).        */
-const WHATSAPP_NUMBER = '524771298654' // formato internacional, sin '+' ni espacios
+   ACCIÓN REQUERIDA: reemplaza WHATSAPP_NUMBER con el número de WhatsApp
+   oficial de Fluvio (formato internacional, sin '+' ni espacios).     */
+const WHATSAPP_NUMBER = process.env.NEXT_PUBLIC_FLUVIO_WHATSAPP ?? '521XXXXXXXXXX'
 const DEMO_MESSAGE = 'Hola, quiero agendar una demo gratis de Fluvio para mi restaurante.'
 const DEMO_URL = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(DEMO_MESSAGE)}`
 const PRECIO_MES = '$1,799' // precio mensual del Founding Member (MXN)

@@ -1,22 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { X, Loader2, Settings2, CheckCircle2, AlertCircle } from 'lucide-react'
-import { createClient } from '@/utils/supabase/client'
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-
-async function apiFetch(path: string, init?: RequestInit) {
-  const { data } = await createClient().auth.getSession()
-  const token = data.session?.access_token ?? ''
-  return fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-  })
-}
+import { apiFetch } from '@/lib/api'
 
 const REGIMENES_EMISOR = [
   { value: '601', label: '601 – General de Ley Personas Morales' },

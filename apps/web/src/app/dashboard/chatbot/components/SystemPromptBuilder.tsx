@@ -5,18 +5,9 @@ import {
   Plus, Trash2, History, RotateCcw, Loader2, Upload, FileText, ImageIcon,
 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
+import { apiFetch } from '@/lib/api'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-
-async function apiFetch(path: string, init?: RequestInit) {
-  const supabase = createClient()
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token ?? ''
-  return fetch(`${API}${path}`, {
-    ...init,
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...init?.headers },
-  })
-}
 
 async function apiJson(path: string, init?: RequestInit) {
   const r = await apiFetch(path, init)

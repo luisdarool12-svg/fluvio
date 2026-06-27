@@ -16,14 +16,23 @@ from modules.reservations.availability import DURACION_DEFAULT_MIN, buscar_mesa_
 from modules.floor_plan.availability import TZ_DEFAULT, revert_expired_overrides
 
 app = FastAPI(
-    title="OptimizaAI API",
+    title="Fluvio API",
     description="Backend multi-tenant de reservaciones para restaurantes",
     version="0.1.0",
 )
 
-_frontend = os.getenv("FRONTEND_URL", "http://localhost:3001")
-_dev_origins = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://127.0.0.1:3000", "http://127.0.0.1:3001", "http://127.0.0.1:3002"]
-_origins = list({_frontend, *_dev_origins}) if os.getenv("ENV", "development") != "production" else [_frontend]
+_frontend = os.getenv("FRONTEND_URL", "http://localhost:3002")
+_production_origins = [
+    o.strip() for o in os.getenv("EXTRA_CORS_ORIGINS", "").split(",") if o.strip()
+]
+_dev_origins = [
+    "http://localhost:3000", "http://localhost:3001", "http://localhost:3002",
+    "http://127.0.0.1:3000", "http://127.0.0.1:3001", "http://127.0.0.1:3002",
+]
+if os.getenv("ENV", "development") != "production":
+    _origins = list({_frontend, *_dev_origins, *_production_origins})
+else:
+    _origins = list({_frontend, *_production_origins})
 
 app.add_middleware(
     CORSMiddleware,

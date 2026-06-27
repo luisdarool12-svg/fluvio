@@ -1,9 +1,9 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
-import { TriangleAlert, Zap, CreditCard } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { TriangleAlert, Zap, AlertCircle } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
-import { createClient } from '@/utils/supabase/client'
 import EmbeddedSignup from '@/components/EmbeddedSignup'
+import { apiFetch } from '@/lib/api'
 
 type Tab = 'perfil' | 'whatsapp' | 'notificaciones' | 'plan'
 
@@ -13,8 +13,6 @@ const TABS: { value: Tab; label: string }[] = [
   { value: 'notificaciones',  label: 'Notificaciones' },
   { value: 'plan',            label: 'Plan'           },
 ]
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
 interface Settings {
   nombre: string
@@ -27,6 +25,9 @@ interface Settings {
   notif_nueva_reserva: boolean
   notif_alerta_noshow: boolean
   notif_resumen_semanal: boolean
+  whatsapp_connected?: boolean
+  whatsapp_token_days_left?: number | null
+  whatsapp_token_warning?: boolean
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -53,36 +54,20 @@ export default function ConfiguracionPage() {
     setTimeout(() => setToast(null), 3000)
   }
 
-  const getToken = useCallback(async () => {
-    const supabase = createClient()
-    const { data } = await supabase.auth.getSession()
-    return data.session?.access_token ?? ''
-  }, [])
-
   useEffect(() => {
     let cancelled = false
-    getToken().then(token => {
-      if (!token) return
-      fetch(`${API}/business/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-        .then(r => r.json())
-        .then(data => { if (!cancelled) setSettings(s => ({ ...s, ...data })) })
-        .catch(() => {})
-    })
+    apiFetch('/business/me')
+      .then(r => r.json())
+      .then(data => { if (!cancelled) setSettings(s => ({ ...s, ...data })) })
+      .catch(() => {})
     return () => { cancelled = true }
-  }, [getToken])
+  }, [])
 
   const save = async (patch: Partial<Settings>) => {
     setSaving(true)
     try {
-      const token = await getToken()
-      const res = await fetch(`${API}/business/me`, {
+      const res = await apiFetch('/business/me', {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify(patch),
       })
       if (!res.ok) throw new Error('Error al guardar')
@@ -203,6 +188,22 @@ export default function ConfiguracionPage() {
 
       {tab === 'whatsapp' && (
         <div className="col gap-14">
+          {settings.whatsapp_token_warning && (
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: 'var(--r-lg)', padding: '14px 16px' }}>
+              <AlertCircle size={18} style={{ color: '#B45309', flex: 'none', marginTop: 1 }} />
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#92400E', marginBottom: 3 }}>
+                  Token de WhatsApp por vencer
+                </div>
+                <div style={{ fontSize: 13, color: '#92400E' }}>
+                  Tu conexión de WhatsApp expira en{' '}
+                  <strong>{settings.whatsapp_token_days_left ?? 0} día{settings.whatsapp_token_days_left === 1 ? '' : 's'}</strong>.
+                  Reconecta ahora usando el botón de abajo para no interrumpir el servicio.
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="card card-pad">
             <EmbeddedSignup />
           </div>
@@ -283,39 +284,41 @@ export default function ConfiguracionPage() {
       {tab === 'plan' && (
         <div className="col gap-14">
           <div style={{ background: 'var(--accent-deep)', borderRadius: 'var(--r-xl)', padding: 24, color: '#fff' }}>
-            <div className="row gap-10" style={{ marginBottom: 16 }}>
+            <div className="row gap-10" style={{ marginBottom: 12 }}>
               <Zap size={20} />
               <span style={{ fontWeight: 700, fontSize: 18, fontFamily: 'var(--font-display)' }}>Plan Starter</span>
               <span style={{ marginLeft: 'auto', background: 'rgba(255,255,255,.15)', borderRadius: 'var(--r-pill)', padding: '2px 10px', fontSize: 12, fontWeight: 600 }}>Activo</span>
             </div>
-            <p style={{ color: 'rgba(255,255,255,.7)', fontSize: 13.5, marginBottom: 18 }}>
-              500 reservas/mes · 1 número de WhatsApp
+            <p style={{ color: 'rgba(255,255,255,.7)', fontSize: 13.5, margin: 0 }}>
+              Reservaciones ilimitadas · 1 número de WhatsApp · Agente IA 24/7
             </p>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-              <span style={{ fontSize: 28, fontFamily: 'var(--font-display)', fontWeight: 700 }}>$99<span style={{ fontSize: 15, opacity: .6 }}>/mes</span></span>
-            </div>
-            <div style={{ background: 'rgba(255,255,255,.15)', borderRadius: 99, height: 6, marginBottom: 6 }}>
-              <div style={{ background: '#fff', width: '64%', height: '100%', borderRadius: 99 }} />
-            </div>
-            <div className="row" style={{ justifyContent: 'space-between' }}>
-              <span style={{ opacity: .7, fontSize: 12.5 }}>320 de 500 reservas usadas este mes</span>
-            </div>
           </div>
 
           <div className="card card-pad">
-            <div className="row" style={{ borderBottom: '1px solid var(--line)', paddingBottom: 16, marginBottom: 16 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 600 }}>Método de pago</div>
-                <div className="faint" style={{ fontSize: 13 }}>Visa •••• 4242 · vence 12/27</div>
+            <div className="row gap-10" style={{ marginBottom: 12 }}>
+              <Zap size={16} style={{ color: 'var(--accent)', flex: 'none' }} />
+              <div>
+                <div style={{ fontSize: 14.5, fontWeight: 600, marginBottom: 4 }}>¿Necesitas más números o funcionalidades?</div>
+                <div className="faint" style={{ fontSize: 13 }}>
+                  Escríbenos para hablar de tu plan: agregar números de WhatsApp, integraciones personalizadas o descuentos por volumen.
+                </div>
               </div>
-              <button className="btn btn-sm btn-ghost"><CreditCard size={14} />Cambiar</button>
             </div>
-            <div className="row">
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 600 }}>Mejorar a Pro</div>
-                <div className="faint" style={{ fontSize: 13 }}>2.000 reservas/mes · 3 números · análisis avanzados</div>
-              </div>
-              <button className="btn btn-primary btn-sm"><Zap size={14} />Ver Pro</button>
+            <div className="row gap-10" style={{ flexWrap: 'wrap' }}>
+              <a
+                href="mailto:hola@gofluvio.com?subject=Quiero%20mejorar%20mi%20plan"
+                className="btn btn-primary btn-sm"
+              >
+                <Zap size={14} />Contactar a Fluvio
+              </a>
+              <a
+                href="https://wa.me/521XXXXXXXXXX?text=Hola%2C%20quiero%20saber%20m%C3%A1s%20sobre%20los%20planes%20de%20Fluvio"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-soft btn-sm"
+              >
+                WhatsApp
+              </a>
             </div>
           </div>
         </div>

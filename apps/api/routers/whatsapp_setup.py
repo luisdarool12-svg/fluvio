@@ -1,5 +1,6 @@
 import os
 import httpx
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from supabase import create_client
@@ -77,12 +78,16 @@ def embedded_signup_callback(
     except Exception as e:
         print(f"[whatsapp_setup] Warning: no se pudo suscribir WABA a webhooks: {e}")
 
+    # Token long-lived de Meta dura ~60 días
+    token_expires_at = (datetime.now(timezone.utc) + timedelta(days=60)).isoformat()
+
     # Persistir credenciales — telefono_whatsapp es la clave de ruteo del bot
     _db().table("businesses").update({
         "waba_id": body.waba_id,
         "telefono_whatsapp": body.phone_number_id,
         "whatsapp_access_token": access_token,
         "whatsapp_connected": True,
+        "whatsapp_token_expires_at": token_expires_at,
     }).eq("id", business_id).execute()
 
     return {"ok": True, "phone_number_id": body.phone_number_id, "waba_id": body.waba_id}
@@ -114,5 +119,6 @@ def disconnect_whatsapp(business_id: str = Depends(get_business_id)):
         "waba_id": None,
         "whatsapp_access_token": None,
         "whatsapp_connected": False,
+        "whatsapp_token_expires_at": None,
     }).eq("id", business_id).execute()
     return {"ok": True}

@@ -1,19 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { Power, RotateCcw, Square, Loader2 } from 'lucide-react'
-import { createClient } from '@/utils/supabase/client'
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-
-async function apiFetch(path: string, init?: RequestInit) {
-  const supabase = createClient()
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token ?? ''
-  return fetch(`${API}${path}`, {
-    ...init,
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...init?.headers },
-  })
-}
+import { apiFetch } from '@/lib/api'
 
 type BotAction = 'restart' | 'start' | 'stop'
 
