@@ -1,0 +1,19 @@
+name: Deploy API a EasyPanel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - '.github/workflows/deploy-api.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger EasyPanel redeploy
+        run: |
+          curl -s -X POST "${{ secrets.EASYPANEL_API_WEBHOOK }}" \
+            -H "Content-Type: application/json" \
+            --fail
+        timeout-minutes: 2
