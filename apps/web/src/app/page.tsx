@@ -490,7 +490,7 @@ export default function LandingPage() {
           <nav style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 24px', fontSize: 13.5 }}>
             <a href="#" className="lp-foot-link">Términos</a>
             <a href="#" className="lp-foot-link">Privacidad</a>
-            <a href="mailto:contacto@fluvio.mx" className="lp-foot-link">contacto@fluvio.mx</a>
+            <a href="mailto:hola@gofluvio.com" className="lp-foot-link">hola@gofluvio.com</a>
           </nav>
           <span style={{ fontSize: 13, color: 'rgba(255,255,255,.45)' }}>Hecho en León, Guanajuato</span>
         </div>
