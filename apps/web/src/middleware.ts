@@ -10,8 +10,14 @@ export async function middleware(request: NextRequest) {
   // IMPORTANTE: no correr código entre createClient() y getClaims().
   // getClaims() refresca el token si expiró; quitarlo provoca logouts aleatorios
   // en rutas con SSR (patrón oficial de @supabase/ssr para Next.js App Router).
-  const { data } = await supabase.auth.getClaims()
-  const user = data?.claims
+  let user = null
+  try {
+    const { data } = await supabase.auth.getClaims()
+    user = data?.claims ?? null
+  } catch {
+    // Si getClaims() lanza (ej. Supabase no responde), tratamos como sin sesión.
+    // Las rutas protegidas redirigen a /login; las públicas pasan sin problema.
+  }
 
   const { pathname } = request.nextUrl
   const isProtected = PROTECTED_PREFIXES.some(prefix => pathname.startsWith(prefix))
