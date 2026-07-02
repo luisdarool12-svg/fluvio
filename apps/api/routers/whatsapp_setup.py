@@ -3,7 +3,7 @@ import httpx
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from supabase import create_client
+from core.db import get_db
 
 from core.auth import get_business_id
 
@@ -13,10 +13,7 @@ META_GRAPH = "https://graph.facebook.com/v21.0"
 
 
 def _db():
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    return get_db()
 
 
 class EmbeddedSignupCallback(BaseModel):
@@ -68,27 +65,66 @@ def embedded_signup_callback(
     if resp2.status_code == 200:
         access_token = resp2.json().get("access_token", short_token)
 
+    # ── Verificación de propiedad ─────────────────────────────────────────────
+    # telefono_whatsapp es la clave de ruteo del bot: sin esta verificación,
+    # un negocio autenticado podría registrar el phone_number_id de OTRO
+    # tenant y secuestrar sus conversaciones. El phone_number_id debe
+    # pertenecer a la WABA a la que este token tiene acceso.
+    try:
+        phones_resp = httpx.get(
+            f"{META_GRAPH}/{body.waba_id}/phone_numbers",
+            params={"access_token": access_token, "fields": "id"},
+            timeout=10.0,
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo verificar el número con Meta. Intenta de nuevo.",
+        )
+    if phones_resp.status_code != 200:
+        raise HTTPException(
+            status_code=403,
+            detail="El token no tiene acceso a esa cuenta de WhatsApp Business (WABA).",
+        )
+    waba_phone_ids = {p.get("id") for p in phones_resp.json().get("data", [])}
+    if body.phone_number_id not in waba_phone_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="El número de WhatsApp no pertenece a la cuenta conectada.",
+        )
+
     # Suscribir la WABA a los webhooks de nuestra app
     try:
-        httpx.post(
+        sub_resp = httpx.post(
             f"{META_GRAPH}/{body.waba_id}/subscribed_apps",
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=10.0,
         )
+        if sub_resp.status_code != 200:
+            print(f"[whatsapp_setup] Warning: subscribed_apps status={sub_resp.status_code} body={sub_resp.text[:200]}")
     except Exception as e:
         print(f"[whatsapp_setup] Warning: no se pudo suscribir WABA a webhooks: {e}")
 
     # Token long-lived de Meta dura ~60 días
     token_expires_at = (datetime.now(timezone.utc) + timedelta(days=60)).isoformat()
 
-    # Persistir credenciales — telefono_whatsapp es la clave de ruteo del bot
-    _db().table("businesses").update({
-        "waba_id": body.waba_id,
-        "telefono_whatsapp": body.phone_number_id,
-        "whatsapp_access_token": access_token,
-        "whatsapp_connected": True,
-        "whatsapp_token_expires_at": token_expires_at,
-    }).eq("id", business_id).execute()
+    # Persistir credenciales. El índice UNIQUE de telefono_whatsapp
+    # (migración 015) es la última línea de defensa contra duplicados.
+    try:
+        _db().table("businesses").update({
+            "waba_id": body.waba_id,
+            "telefono_whatsapp": body.phone_number_id,
+            "whatsapp_access_token": access_token,
+            "whatsapp_connected": True,
+            "whatsapp_token_expires_at": token_expires_at,
+        }).eq("id", business_id).execute()
+    except Exception as e:
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            raise HTTPException(
+                status_code=409,
+                detail="Ese número de WhatsApp ya está conectado a otra cuenta de Fluvio.",
+            )
+        raise
 
     return {"ok": True, "phone_number_id": body.phone_number_id, "waba_id": body.waba_id}
 

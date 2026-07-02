@@ -2,9 +2,9 @@ import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from supabase import create_client
+from core.db import get_db
 
 from core.auth import get_business_id
 from modules.reservations.scoring import calculate_no_show_score, recommended_action
@@ -14,10 +14,7 @@ router = APIRouter()
 
 
 def get_supabase():
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    return get_db()
 
 
 class ReservationCreate(BaseModel):
@@ -41,6 +38,8 @@ class ReservationUpdate(BaseModel):
 def list_reservations(
     fecha: Optional[str] = None,
     estado: Optional[str] = None,
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     business_id: str = Depends(get_business_id),
 ):
     db = get_supabase()
@@ -53,7 +52,7 @@ def list_reservations(
     if estado:
         query = query.eq("estado", estado)
 
-    result = query.order("fecha_hora").execute()
+    result = query.order("fecha_hora").range(offset, offset + limit - 1).execute()
     return result.data
 
 

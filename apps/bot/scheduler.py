@@ -170,8 +170,12 @@ async def job_confirmations() -> None:
             await _send_and_mark(db, business, phone, msg, "reservations", r["id"], "confirmation_sent")
 
 
-async def job_outbox_flush() -> None:
-    """Vacía el outbox (mensajes encolados por el job de no-show / operador)."""
+async def job_outbox_flush() -> dict:
+    """Vacía el outbox (mensajes encolados por el job de no-show / operador).
+
+    Devuelve conteos para que el endpoint interno del bot pueda reutilizar
+    esta misma lógica (única implementación del flush).
+    """
     db = _db()
     items = db.table("outbox").select(
         "id,phone,content,business_id"
@@ -180,6 +184,8 @@ async def job_outbox_flush() -> None:
     # Cache de negocios para no consultar uno por cada mensaje.
     biz_by_id = {b["id"]: b for b in _active_businesses(db)}
 
+    sent_count = 0
+    error_count = 0
     for item in items.data or []:
         business = biz_by_id.get(item["business_id"])
         if not business:
@@ -191,6 +197,11 @@ async def job_outbox_flush() -> None:
         if result["ok"] or not result["retriable"]:
             db.table("outbox").update({"sent": True}).eq("id", item["id"]).execute()
         # transitorio → se queda en el outbox para el próximo flush.
+        if result["ok"]:
+            sent_count += 1
+        else:
+            error_count += 1
+    return {"sent": sent_count, "errors": error_count}
 
 
 async def job_noshow_hourly() -> None:

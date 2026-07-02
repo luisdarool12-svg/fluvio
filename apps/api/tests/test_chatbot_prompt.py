@@ -52,8 +52,8 @@ def test_prompt_completo_incluye_identidad_y_secciones():
     assert "bistró francés" in prompt
     assert "Av. Principal 123, Centro, León" in prompt
     # Tono y reglas de comunicación
-    assert "casual usando tú" in prompt
-    assert "Español" in prompt
+    assert "Usa tratamiento de tú" in prompt
+    assert "Responde siempre en español." in prompt
     assert "2-3 líneas máximo" in prompt
 
 
@@ -75,9 +75,9 @@ def test_menu_manual_filtra_no_disponibles_y_marca_tags():
 def test_reservaciones_aceptadas_incluyen_limites():
     prompt = build_system_prompt(_form_completo())
 
-    assert "Sí aceptamos reservaciones" in prompt
-    assert "Máximo 8 personas" in prompt
-    assert "Anticipación mínima: 3 horas" in prompt
+    assert "FLUJO DE RESERVACIÓN" in prompt
+    assert "máximo 8 por este canal" in prompt
+    assert "confirmar_reservacion" in prompt
 
 
 def test_solo_eventos_activos_aparecen():
@@ -93,7 +93,8 @@ def test_escalacion_usa_reglas_y_mensaje_configurados():
 
     assert "El cliente pide explícitamente hablar con una persona" in prompt
     assert "Grupos grandes (más de 6 personas)" in prompt
-    assert 'envía exactamente este mensaje: "Te conecto con el equipo."' in prompt
+    assert "Cuando debas escalar, envía exactamente este mensaje:" in prompt
+    assert "«Te conecto con el equipo.»" in prompt
 
 
 def test_show_prices_false_prohibe_mencionar_precios():
@@ -109,7 +110,7 @@ def test_form_vacio_usa_defaults_seguros():
 
     assert "el asistente virtual de el restaurante" in prompt
     assert "Menú no especificado." in prompt
-    assert "No aceptamos reservaciones en este momento" in prompt
+    assert "No aceptamos reservaciones. Los clientes son atendidos por orden de llegada." in prompt
     assert "Sin eventos o promociones vigentes" in prompt
     assert "- Cuando el cliente solicite hablar con una persona" in prompt
     # Nunca debe colarse un placeholder de formato sin resolver

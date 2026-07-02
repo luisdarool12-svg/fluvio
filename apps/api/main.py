@@ -1,3 +1,4 @@
+import hmac
 import os
 from datetime import datetime
 from typing import Optional
@@ -5,10 +6,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from supabase import create_client
+from core.db import get_db
+from core.ratelimit import check_rate_limit
 
 from routers import reservations, customers, tables, chatbot, business, campaigns, whatsapp_setup, billing
 from jobs.noshow import run_nightly_noshow_check
@@ -42,6 +45,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    exceeded = check_rate_limit(request)
+    if exceeded is not None:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": f"Demasiadas solicitudes (límite: {exceeded}/min). Intenta de nuevo en un momento."},
+        )
+    return await call_next(request)
+
 app.include_router(reservations.router, prefix="/reservations", tags=["reservations"])
 app.include_router(customers.router, prefix="/customers", tags=["customers"])
 app.include_router(tables.router, prefix="/tables", tags=["tables"])
@@ -54,15 +68,12 @@ app.include_router(billing.router, prefix="/billing", tags=["billing"])
 
 def _verify_internal_secret(x_internal_secret: str) -> None:
     expected = os.getenv("INTERNAL_JOB_SECRET", "")
-    if not expected or x_internal_secret != expected:
+    if not expected or not hmac.compare_digest(x_internal_secret, expected):
         raise HTTPException(status_code=401, detail="Secreto interno inválido")
 
 
 def _service_db():
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    return get_db()
 
 
 @app.post("/internal/noshow/run")

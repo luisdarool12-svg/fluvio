@@ -19,7 +19,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
-from supabase import create_client
+from core.db import get_db
 
 from core.auth import get_business_id
 from services.facturama import (
@@ -37,10 +37,7 @@ router = APIRouter()
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _db():
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    return get_db()
 
 
 def _get_facturacion_config(business_id: str) -> dict:
@@ -173,7 +170,15 @@ def create_cfdi(body: CFDICreate, business_id: str = Depends(get_business_id)):
     total = round(body.subtotal + iva, 2)
 
     serie = cfg.get("serie_default", "A")
-    folio_num = cfg.get("folio_siguiente", 1)
+    # Folio atómico vía RPC (migración 015): dos timbrados simultáneos ya no
+    # pueden compartir folio. Fallback al valor leído si la RPC aún no existe.
+    folio_atomico = True
+    try:
+        folio_num = db.rpc("next_cfdi_folio", {"p_business_id": business_id}).execute().data
+    except Exception as exc:
+        logger.warning("[billing] RPC next_cfdi_folio no disponible (%s); usando folio no atómico", exc)
+        folio_num = cfg.get("folio_siguiente", 1)
+        folio_atomico = False
     folio = str(folio_num)
 
     receptor = ReceptorCFDI(
@@ -239,9 +244,11 @@ def create_cfdi(body: CFDICreate, business_id: str = Depends(get_business_id)):
             "fecha_timbrado": datetime.now(timezone.utc).isoformat(),
         }).eq("id", cfdi_id).execute()
 
-        # Avanzar el folio del negocio
-        new_cfg = {**cfg, "folio_siguiente": folio_num + 1}
-        db.table("businesses").update({"facturacion_config": new_cfg}).eq("id", business_id).execute()
+        # Avanzar el folio del negocio (la RPC ya lo avanzó de forma atómica;
+        # solo se hace a mano en el fallback para no pisar el valor nuevo)
+        if not folio_atomico:
+            new_cfg = {**cfg, "folio_siguiente": folio_num + 1}
+            db.table("businesses").update({"facturacion_config": new_cfg}).eq("id", business_id).execute()
 
         logger.info("[billing] CFDI timbrado: %s UUID=%s", cfdi_id, uuid_fiscal)
 

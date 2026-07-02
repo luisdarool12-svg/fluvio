@@ -68,7 +68,7 @@ Todas se leen desde `.env` en la raíz de `app/`. Las tres apps cargan el mismo 
 | `SUPABASE_URL` | api, bot, web | Supabase > Settings > API |
 | `SUPABASE_ANON_KEY` | web (cliente browser) | Supabase > Settings > API |
 | `SUPABASE_SERVICE_ROLE_KEY` | api, bot (bypasa RLS) | Supabase > Settings > API |
-| `SUPABASE_JWT_SECRET` | api (valida tokens) | Supabase > Settings > API > JWT Secret — **requerido, el api no arranca sin él** |
+| `META_APP_ID` / `META_APP_SECRET` | api (Embedded Signup), bot (firma del webhook) | Meta for Developers > App Settings. **Sin META_APP_SECRET el webhook del bot acepta POSTs sin autenticar (solo dev)** |
 | `ANTHROPIC_API_KEY` | api, bot | console.anthropic.com |
 | `WHATSAPP_TOKEN` | bot | Meta for Developers |
 | `WHATSAPP_VERIFY_TOKEN` | bot | definido por ti, registrado en Meta |
@@ -105,7 +105,7 @@ Cliente WhatsApp
 
 1. El browser autentica en Supabase Auth y obtiene un JWT.
 2. El JWT contiene un custom claim `business_id` inyectado via Supabase hook (Auth > Hooks).
-3. `apps/api/core/auth.py:get_business_id()` valida el JWT con `SUPABASE_JWT_SECRET` y extrae `business_id`.
+3. `apps/api/core/auth.py:get_business_id()` valida el JWT (ES256) contra el JWKS público del proyecto (`/auth/v1/.well-known/jwks.json`, cache 1h con fallback estático) y extrae `business_id`.
 4. Todos los endpoints del API usan `business_id: str = Depends(get_business_id)`.
 5. **Excepción:** `POST /webhook/whatsapp` y `GET /health` son los únicos endpoints públicos.
 
@@ -177,6 +177,9 @@ Las migraciones se ejecutan manualmente en **Supabase Studio > SQL Editor** en o
 | `010_anti_ban_compliance.sql` | whatsapp_opt_in en customers; tier/quality/contadores diarios en businesses; reset_daily_message_count() |
 | `011_embedded_signup.sql` | waba_id, whatsapp_access_token, whatsapp_connected en businesses (Embedded Signup) |
 | `012_security_hardening.sql` | search_path fijo en las funciones de Postgres (linter de Supabase) |
+| `013_billing_cfdi.sql` | tabla cfdis + facturacion_config (Facturama) |
+| `014_whatsapp_token_expiry.sql` | whatsapp_token_expires_at en businesses |
+| `015_launch_hardening.sql` | UNIQUE en telefono_whatsapp, RPC next_cfdi_folio (folio atómico), índice del outbox |
 
 **Nueva migración:** crear `0XX_<nombre>.sql` con el siguiente número secuencial. Nunca modificar migraciones ya ejecutadas.
 

@@ -1,8 +1,8 @@
 import os
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from supabase import create_client
+from core.db import get_db
 
 from core.auth import get_business_id
 
@@ -10,10 +10,7 @@ router = APIRouter()
 
 
 def get_supabase():
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    return get_db()
 
 
 class CustomerCreate(BaseModel):
@@ -26,13 +23,15 @@ class CustomerCreate(BaseModel):
 @router.get("/")
 def list_customers(
     q: Optional[str] = None,
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     business_id: str = Depends(get_business_id),
 ):
     db = get_supabase()
     query = db.table("customers").select("*").eq("business_id", business_id)
     if q:
         query = query.ilike("nombre", f"%{q}%")
-    result = query.order("nombre").execute()
+    result = query.order("nombre").range(offset, offset + limit - 1).execute()
     return result.data
 
 

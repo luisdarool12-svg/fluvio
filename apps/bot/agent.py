@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from system_prompt import get_system_prompt
 from sheets_service import register_event_inscription
+from business_hours import DAYS_ES, weekly_hours, rango_str, dias_abiertos_str
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
@@ -24,17 +25,27 @@ CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 _AVAILABILITY_TIMEOUT_S = 5.0
 
-# ─── Clientes ────────────────────────────────────────────────────────────────
+# ─── Clientes (singletons — evitan reconstruir el cliente HTTP por mensaje) ──
+
+_claude_singleton: Optional[anthropic.Anthropic] = None
+_db_singleton: Optional[Client] = None
+
 
 def _claude() -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    global _claude_singleton
+    if _claude_singleton is None:
+        _claude_singleton = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    return _claude_singleton
 
 
 def _db() -> Client:
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    global _db_singleton
+    if _db_singleton is None:
+        _db_singleton = create_client(
+            os.environ["SUPABASE_URL"],
+            os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+        )
+    return _db_singleton
 
 
 # ─── Cache de negocio ────────────────────────────────────────────────────────
@@ -71,8 +82,14 @@ def get_business(phone_number_id: str) -> Optional[dict]:
         if time.monotonic() - fetched_at < BUSINESS_CACHE_TTL_SECONDS:
             return data
 
+    # Columnas explícitas: nunca cachear en memoria credenciales que el bot
+    # no necesita (facturacion_config lleva contraseñas de Facturama).
+    _BUSINESS_COLUMNS = (
+        "id,nombre,telefono_whatsapp,whatsapp_access_token,activo,"
+        "bot_config,prompt_form_data,zona_horaria"
+    )
     try:
-        result = _db().table("businesses").select("*").eq(
+        result = _db().table("businesses").select(_BUSINESS_COLUMNS).eq(
             "telefono_whatsapp", phone_number_id
         ).eq("activo", True).execute()
     except Exception as e:
@@ -383,7 +400,9 @@ def mark_confirmed(db: Client, res_id: str) -> None:
 
 # ─── Validación ──────────────────────────────────────────────────────────────
 
-def validate_reservation(reserva: dict) -> str:
+def validate_reservation(reserva: dict, business: dict) -> str:
+    """Valida fecha y hora contra el horario configurado del negocio
+    (prompt_form_data.hours del System Prompt Builder)."""
     fecha = reserva.get("fecha", "")
     hora  = reserva.get("hora", "")
 
@@ -394,8 +413,14 @@ def validate_reservation(reserva: dict) -> str:
     today = datetime.now(TZ).date()
     if d < today:
         return "ERROR: La fecha ya pasó. El cliente debe elegir una fecha futura."
-    if d.weekday() == 0:  # Monday
-        return "ERROR: La fecha solicitada cae en lunes, día de cierre. Informa al cliente e invítalo a elegir otro día (martes a domingo)."
+
+    horario = weekly_hours(business)
+    rango = horario.get(d.weekday())
+    if rango is None:
+        return (
+            f"ERROR: La fecha solicitada cae en {DAYS_ES[d.weekday()]}, día de cierre. "
+            f"Informa al cliente e invítalo a elegir otro día ({dias_abiertos_str(business)})."
+        )
 
     try:
         hh, mi = map(int, hora.split(":"))
@@ -403,14 +428,12 @@ def validate_reservation(reserva: dict) -> str:
         return "ERROR: Formato de hora inválido. Pide al cliente la hora nuevamente."
 
     minutes = hh * 60 + mi
-    is_sunday = d.weekday() == 6
-    open_start = 14 * 60
-    open_end   = 18 * 60 if is_sunday else 23 * 60
+    open_start, open_end = rango
 
     if minutes < open_start or minutes > open_end:
-        rng = "14:00 a 18:00" if is_sunday else "14:00 a 23:00"
         return (
-            f"ERROR: La hora {hora} está fuera del horario de atención ({rng}). "
+            f"ERROR: La hora {hora} está fuera del horario de atención "
+            f"({rango_str(rango)}). "
             "Informa al cliente e invítalo a elegir otra hora dentro del rango."
         )
 
@@ -490,19 +513,30 @@ TOOLS = [
             "required": ["nombre", "fecha", "hora"],
         },
     },
-    {
-        "name": "registrar_en_evento",
-        "description": "Registra a un cliente en la Master Class.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "nombre": {"type": "string", "description": "Nombre completo del cliente"},
-                "turno":  {"type": "string", "description": "matutino o vespertino"},
-            },
-            "required": ["nombre", "turno"],
-        },
-    },
 ]
+
+# Tool de eventos con Google Sheets — solo se ofrece a Claude si el negocio
+# tiene bot_config.sheets_id configurado (era exclusiva del piloto Dublé).
+_EVENT_TOOL = {
+    "name": "registrar_en_evento",
+    "description": "Registra a un cliente en el evento especial vigente del restaurante.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "nombre": {"type": "string", "description": "Nombre completo del cliente"},
+            "turno":  {"type": "string", "description": "matutino o vespertino"},
+        },
+        "required": ["nombre", "turno"],
+    },
+}
+
+
+def build_tools(business: dict) -> list[dict]:
+    bot_config = business.get("bot_config") or {}
+    tools = list(TOOLS)
+    if bot_config.get("sheets_id"):
+        tools.append(_EVENT_TOOL)
+    return tools
 
 
 # ─── Llamada de segundo turno (tool result → reply final) ────────────────────
@@ -514,6 +548,7 @@ def _second_turn(
     first_response_content: list,
     tool_use_id: str,
     tool_result: str,
+    tools: Optional[list] = None,
 ) -> str:
     messages2 = messages + [
         {"role": "assistant", "content": first_response_content},
@@ -526,7 +561,7 @@ def _second_turn(
         model=CLAUDE_MODEL,
         max_tokens=600,
         system=system,
-        tools=TOOLS,
+        tools=tools if tools is not None else TOOLS,
         messages=messages2,
     )
     for block in resp.content:
@@ -617,13 +652,14 @@ def handle_message(
 
     system = get_system_prompt(business)
     client = _claude()
+    tools = build_tools(business)
 
     try:
         response = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=600,
             system=system,
-            tools=TOOLS,
+            tools=tools,
             messages=messages,
         )
     except Exception as e:
@@ -646,10 +682,10 @@ def handle_message(
 
         if tname == "consultar_disponibilidad":
             tool_resp = _disponibilidad_tool_result(business_id, tinput)
-            reply = _second_turn(client, system, messages, response.content, tool_block.id, tool_resp)
+            reply = _second_turn(client, system, messages, response.content, tool_block.id, tool_resp, tools)
 
         elif tname == "confirmar_reservacion":
-            tool_resp = validate_reservation(tinput)
+            tool_resp = validate_reservation(tinput, business)
 
             if not tool_resp.startswith("ERROR"):
                 # Motor de disponibilidad: rechazar si está lleno, asignar mesa si hay
@@ -701,17 +737,23 @@ def handle_message(
                             "Discúlpate con el cliente y pídele que lo intente de nuevo en unos minutos."
                         )
 
-            reply = _second_turn(client, system, messages, response.content, tool_block.id, tool_resp)
+            reply = _second_turn(client, system, messages, response.content, tool_block.id, tool_resp, tools)
 
         elif tname == "modificar_reservacion":
-            fecha_eff = tinput.get("fecha_nueva") or tinput["fecha"]
-            hora_eff  = tinput.get("hora_nueva")  or tinput["hora_original"]
-            check = {"nombre": tinput["nombre"], "fecha": fecha_eff, "hora": hora_eff, "personas": tinput.get("personas_nuevas", 2)}
-            tool_resp = validate_reservation(check)
-            reply = _second_turn(client, system, messages, response.content, tool_block.id, tool_resp)
-            if not tool_resp.startswith("ERROR"):
-                row = _find_reservation(db, business_id, customer_phone, tinput["fecha"], tinput["hora_original"])
-                if row:
+            # Primero verificar que la reservación exista — nunca decirle al
+            # cliente que se modificó algo que no encontramos.
+            row = _find_reservation(db, business_id, customer_phone, tinput["fecha"], tinput["hora_original"])
+            if not row:
+                tool_resp = (
+                    "ERROR: No se encontró una reservación activa con esa fecha y hora. "
+                    "Pide al cliente confirmar la fecha y hora exactas de su reservación original."
+                )
+            else:
+                fecha_eff = tinput.get("fecha_nueva") or tinput["fecha"]
+                hora_eff  = tinput.get("hora_nueva")  or tinput["hora_original"]
+                check = {"nombre": tinput["nombre"], "fecha": fecha_eff, "hora": hora_eff, "personas": tinput.get("personas_nuevas", 2)}
+                tool_resp = validate_reservation(check, business)
+                if not tool_resp.startswith("ERROR"):
                     patch: dict = {}
                     if tinput.get("hora_nueva") or tinput.get("fecha_nueva"):
                         new_d = _fecha_to_date(tinput.get("fecha_nueva") or tinput["fecha"])
@@ -722,16 +764,39 @@ def handle_message(
                     if tinput.get("personas_nuevas"):
                         patch["personas"] = tinput["personas_nuevas"]
                     if patch:
-                        _update_reservation(db, row["id"], patch)
+                        try:
+                            _update_reservation(db, row["id"], patch)
+                            tool_resp = "Reservación modificada exitosamente en el sistema."
+                        except Exception as e:
+                            print(f"[agent] Error modificando reservación: {e}")
+                            tool_resp = (
+                                "ERROR: Problema técnico al modificar la reservación. "
+                                "Discúlpate y pide al cliente intentarlo de nuevo en unos minutos."
+                            )
+            reply = _second_turn(client, system, messages, response.content, tool_block.id, tool_resp, tools)
 
         elif tname == "cancelar_reservacion":
-            reply = _second_turn(client, system, messages, response.content, tool_block.id, "Cancelación registrada exitosamente.")
+            # Igual que modificar: buscar primero, confirmar solo lo que sí ocurrió.
             row = _find_reservation(db, business_id, customer_phone, tinput["fecha"], tinput["hora"])
             if row:
-                _cancel_reservation(db, row["id"])
+                try:
+                    _cancel_reservation(db, row["id"])
+                    tool_resp = "Cancelación registrada exitosamente."
+                except Exception as e:
+                    print(f"[agent] Error cancelando reservación: {e}")
+                    tool_resp = (
+                        "ERROR: Problema técnico al cancelar la reservación. "
+                        "Discúlpate y pide al cliente intentarlo de nuevo en unos minutos."
+                    )
+            else:
+                tool_resp = (
+                    "ERROR: No se encontró una reservación activa con esa fecha y hora. "
+                    "Pide al cliente confirmar la fecha y hora exactas de su reservación."
+                )
+            reply = _second_turn(client, system, messages, response.content, tool_block.id, tool_resp, tools)
 
         elif tname == "registrar_en_evento":
-            reply = _second_turn(client, system, messages, response.content, tool_block.id, "Inscripción registrada exitosamente.")
+            reply = _second_turn(client, system, messages, response.content, tool_block.id, "Inscripción registrada exitosamente.", tools)
             try:
                 bot_config = business.get("bot_config") or {}
                 if bot_config.get("sheets_id"):

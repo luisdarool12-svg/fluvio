@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 import httpx
 import anthropic
-from supabase import create_client
+from core.db import get_db
 
 from core.auth import get_business_id
 
@@ -15,10 +15,7 @@ router = APIRouter()
 
 
 def get_supabase():
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    return get_db()
 
 
 # ─── Schemas ─────────────────────────────────────────────────
@@ -413,30 +410,52 @@ async def parse_menu_file(
 
 @router.get("/stats")
 def get_stats(business_id: str = Depends(get_business_id)):
+    """Estadísticas con queries de conteo — nunca descarga las tablas completas
+    (con meses de operación, conversations/messages crecen sin límite)."""
     db = get_supabase()
-
-    convs = db.table("conversations").select("id, mode, created_at").eq("business_id", business_id).execute()
-    msgs = db.table("messages").select("id, role, created_at").eq("business_id", business_id).execute()
 
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
 
-    total_convs = len(convs.data)
-    month_convs = sum(1 for c in convs.data if c["created_at"] >= month_start)
-    ai_convs = sum(1 for c in convs.data if c.get("mode") == "AI")
-    human_convs = sum(1 for c in convs.data if c.get("mode") == "HUMAN")
+    def _count(table: str, **eq_filters) -> int:
+        q = db.table(table).select("id", count="exact", head=True).eq("business_id", business_id)
+        for col, val in eq_filters.items():
+            q = q.eq(col, val)
+        return q.execute().count or 0
+
+    total_convs = _count("conversations")
+    month_convs = (
+        db.table("conversations").select("id", count="exact", head=True)
+        .eq("business_id", business_id).gte("created_at", month_start)
+        .execute().count or 0
+    )
+    ai_convs = _count("conversations", mode="AI")
+    human_convs = _count("conversations", mode="HUMAN")
     escalated = 0  # Requires migration 005 (status column)
 
-    sent = sum(1 for m in msgs.data if m["role"] in ("assistant", "human"))
-    received = sum(1 for m in msgs.data if m["role"] == "user")
+    received = _count("messages", role="user")
+    sent = (
+        db.table("messages").select("id", count="exact", head=True)
+        .eq("business_id", business_id).in_("role", ["assistant", "human"])
+        .execute().count or 0
+    )
 
-    # Conversations per day for last 30 days
+    # Conversations per day for last 30 days — solo se traen los created_at
+    # de la ventana, no todo el historial.
     from datetime import timedelta
+    window_start = (now - timedelta(days=30)).isoformat()
+    recent = (
+        db.table("conversations").select("created_at")
+        .eq("business_id", business_id).gte("created_at", window_start)
+        .execute()
+    )
+    by_day: dict = {}
+    for c in recent.data or []:
+        by_day[c["created_at"][:10]] = by_day.get(c["created_at"][:10], 0) + 1
     days_data = []
     for i in range(29, -1, -1):
         d = (now - timedelta(days=i)).date().isoformat()
-        count = sum(1 for c in convs.data if c["created_at"][:10] == d)
-        days_data.append({"date": d, "count": count})
+        days_data.append({"date": d, "count": by_day.get(d, 0)})
 
     return {
         "total_conversations": total_convs,

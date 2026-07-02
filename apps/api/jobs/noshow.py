@@ -15,7 +15,9 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional
 
-from supabase import create_client, Client
+from supabase import Client
+
+from core.db import get_db
 
 from modules.reservations.scoring import calculate_no_show_score, recommended_action
 from modules.reservations.notify import (
@@ -30,10 +32,7 @@ RUN_HOUR = 22
 
 
 def _db() -> Client:
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    return get_db()
 
 
 def _fmt(dt_iso: str, tz: ZoneInfo) -> tuple[str, str]:

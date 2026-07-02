@@ -15,7 +15,14 @@ const fs = require('fs')
 // ─── Config ──────────────────────────────────────────────────────────���────────
 const BOT_API_URL          = process.env.BOT_API_URL          || 'http://localhost:8001'
 const DUBLE_PHONE_NUMBER_ID = process.env.DUBLE_PHONE_NUMBER_ID || 'duble-baileys'
+const INTERNAL_JOB_SECRET  = process.env.INTERNAL_JOB_SECRET  || ''
 const AUTH_DIR             = path.resolve(__dirname, 'auth_info')
+
+// Los endpoints /internal/* del bot exigen este header en cada request.
+axios.defaults.headers.common['X-Internal-Secret'] = INTERNAL_JOB_SECRET
+if (!INTERNAL_JOB_SECRET) {
+  console.warn('[bot] ADVERTENCIA: INTERNAL_JOB_SECRET no configurado — el bot rechazará las llamadas del bridge')
+}
 
 const logger = pino({ level: 'silent' })
 

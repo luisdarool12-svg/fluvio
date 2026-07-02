@@ -3,10 +3,10 @@ import os
 import httpx
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 import anthropic
-from supabase import create_client
+from core.db import get_db
 
 from core.auth import get_business_id
 
@@ -29,10 +29,7 @@ _SEND_DELAY_SECONDS = 1.2
 
 
 def get_supabase():
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    return get_db()
 
 
 # ─── Schemas ─────────────────────────────────────────────────────────────────
@@ -76,9 +73,10 @@ def _get_segment_customers(db, business_id: str, segment: str) -> list[dict]:
 
 
 def _get_business_compliance(db, business_id: str) -> dict:
-    """Devuelve tier, quality rating y contador diario del negocio."""
+    """Devuelve tier, quality rating, contador diario y credenciales del negocio."""
     result = db.table("businesses").select(
-        "whatsapp_tier,whatsapp_quality,whatsapp_msgs_today,whatsapp_msgs_reset,telefono_whatsapp"
+        "whatsapp_tier,whatsapp_quality,whatsapp_msgs_today,whatsapp_msgs_reset,"
+        "telefono_whatsapp,whatsapp_access_token"
     ).eq("id", business_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Negocio no encontrado")
@@ -250,9 +248,66 @@ def get_campaign_stats(campaign_id: str, business_id: str = Depends(get_business
     }
 
 
+async def _run_campaign_send(
+    campaign_id: str,
+    business_id: str,
+    mensaje: str,
+    phone_number_id: str,
+    token: str,
+    sendable: list[dict],
+    skipped: int,
+    msgs_today: int,
+) -> None:
+    """
+    Loop de envío — corre como tarea en background: con la pausa anti-spam de
+    1.2s por mensaje, una audiencia de 250 tarda ~5 min y dentro del request
+    HTTP moriría por timeout del proxy dejando la campaña atorada en 'enviando'.
+    """
+    db = get_supabase()
+    sent = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        for recipient in sendable:
+            cust = recipient.get("customers") or {}
+            phone = cust.get("telefono", "")
+            if not phone:
+                continue
+
+            try:
+                ok = await _send_whatsapp_message(phone, mensaje, phone_number_id, token)
+            except Exception:
+                ok = False
+            db.table("campaign_recipients").update({
+                "enviado": ok,
+                "sent_at": now_iso if ok else None,
+            }).eq("id", recipient["id"]).execute()
+
+            if ok:
+                sent += 1
+
+            # Pausa entre mensajes — evita el patrón de velocidad que Meta detecta como spam
+            await asyncio.sleep(_SEND_DELAY_SECONDS)
+    finally:
+        # Pase lo que pase, la campaña nunca se queda en 'enviando'
+        new_state = "completada" if skipped == 0 else "borrador"
+        db.table("campaigns").update({
+            "estado": new_state,
+            "total_enviados": sent,
+        }).eq("id", campaign_id).execute()
+
+        db.table("businesses").update({
+            "whatsapp_msgs_today": msgs_today + sent,
+        }).eq("id", business_id).execute()
+
+
 @router.post("/{campaign_id}/send")
-async def send_campaign(campaign_id: str, business_id: str = Depends(get_business_id)):
-    """Envía la campaña respetando las reglas anti-ban de Meta."""
+async def send_campaign(
+    campaign_id: str,
+    background_tasks: BackgroundTasks,
+    business_id: str = Depends(get_business_id),
+):
+    """Valida compliance y encola el envío de la campaña en background."""
     db = get_supabase()
 
     # ── 1. Verificar que la campaña existe y está en estado enviable ──────────
@@ -281,7 +336,8 @@ async def send_campaign(campaign_id: str, business_id: str = Depends(get_busines
         )
 
     phone_number_id = compliance.get("telefono_whatsapp")
-    token = os.environ.get("WHATSAPP_TOKEN", "")
+    # Token del negocio (Embedded Signup); el global del env es solo fallback
+    token = compliance.get("whatsapp_access_token") or os.environ.get("WHATSAPP_TOKEN", "")
     if not token or not phone_number_id:
         raise HTTPException(status_code=500, detail="Configuración de WhatsApp incompleta")
 
@@ -310,49 +366,21 @@ async def send_campaign(campaign_id: str, business_id: str = Depends(get_busines
     sendable = pending[:remaining_quota]
     skipped = len(pending) - len(sendable)
 
-    # ── 4. Enviar con rate limiting ───────────────────────────────────────────
+    # ── 4. Marcar como 'enviando' y delegar el loop al background ─────────────
+    # Marcar aquí (no en la tarea) también evita el doble-envío si el operador
+    # hace click dos veces: el segundo request ve estado='enviando' y recibe 400.
     db.table("campaigns").update({"estado": "enviando"}).eq("id", campaign_id).execute()
 
-    sent = 0
-    errors = 0
-    now_iso = datetime.now(timezone.utc).isoformat()
-
-    for recipient in sendable:
-        cust = recipient.get("customers") or {}
-        phone = cust.get("telefono", "")
-        if not phone:
-            continue
-
-        ok = await _send_whatsapp_message(phone, c["mensaje"], phone_number_id, token)
-        db.table("campaign_recipients").update({
-            "enviado": ok,
-            "sent_at": now_iso if ok else None,
-        }).eq("id", recipient["id"]).execute()
-
-        if ok:
-            sent += 1
-        else:
-            errors += 1
-
-        # Pausa entre mensajes — evita el patrón de velocidad que Meta detecta como spam
-        await asyncio.sleep(_SEND_DELAY_SECONDS)
-
-    # ── 5. Actualizar estado de campaña y contador del negocio ─────────────────
-    new_state = "completada" if skipped == 0 else "borrador"
-    db.table("campaigns").update({
-        "estado": new_state,
-        "total_enviados": sent,
-    }).eq("id", campaign_id).execute()
-
-    db.table("businesses").update({
-        "whatsapp_msgs_today": msgs_today + sent,
-    }).eq("id", business_id).execute()
+    background_tasks.add_task(
+        _run_campaign_send,
+        campaign_id, business_id, c["mensaje"], phone_number_id, token,
+        sendable, skipped, msgs_today,
+    )
 
     return {
-        "sent": sent,
-        "errors": errors,
+        "queued": len(sendable),
         "skipped_quota": skipped,
-        "remaining_quota": max(0, remaining_quota - sent),
+        "remaining_quota": remaining_quota,
         "daily_limit": daily_limit,
         "tier": tier,
     }

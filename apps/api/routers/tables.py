@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from supabase import create_client
+from core.db import get_db
 
 from core.auth import get_business_id
 from modules.reservations.availability import (
@@ -27,10 +27,7 @@ router = APIRouter()
 
 
 def get_supabase():
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    return get_db()
 
 
 def _business_tz(db, business_id: str) -> ZoneInfo:

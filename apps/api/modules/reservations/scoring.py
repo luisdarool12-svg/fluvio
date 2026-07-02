@@ -10,14 +10,13 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from supabase import create_client, Client
+from supabase import Client
+
+from core.db import get_db
 
 
 def get_supabase() -> Client:
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    return get_db()
 
 
 def _days_since(iso_ts: Optional[str], now: datetime) -> Optional[float]:

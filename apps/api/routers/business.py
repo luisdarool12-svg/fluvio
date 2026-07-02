@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from supabase import create_client
+from core.db import get_db
 from typing import Optional
 
 from core.auth import get_business_id
@@ -11,10 +11,7 @@ router = APIRouter()
 
 
 def get_supabase():
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    return get_db()
 
 
 class BusinessSettingsUpdate(BaseModel):

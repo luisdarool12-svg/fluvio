@@ -1,9 +1,9 @@
 """
 Tests de core/auth.py (get_business_id).
 
-Se genera un keypair EC P-256 propio y se reemplaza auth._PUBLIC_KEY, de modo
-que se ejercita el decode ES256 real de python-jose, no un mock del decode.
-Sin llamadas reales a Supabase: el fallback a la tabla users usa FakeDB.
+Se genera un keypair EC P-256 propio y se reemplaza auth._get_signing_key,
+de modo que se ejercita el decode ES256 real de python-jose, no un mock del
+decode. Sin llamadas reales a Supabase: el fallback a users usa FakeDB.
 """
 import time
 
@@ -41,7 +41,8 @@ _OTRA_PRIV, _ = _pem_keypair()  # llave ajena para firmar tokens inválidos
 
 @pytest.fixture(autouse=True)
 def _usar_keypair_de_test(monkeypatch):
-    monkeypatch.setattr(auth, "_PUBLIC_KEY", _PUB)
+    # jwt.decode de python-jose acepta la llave pública en PEM directamente
+    monkeypatch.setattr(auth, "_get_signing_key", lambda kid: (_PUB, "ES256"))
 
 
 def _creds(token: str) -> HTTPAuthorizationCredentials:

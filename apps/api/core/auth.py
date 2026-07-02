@@ -1,18 +1,23 @@
 import logging
 import os
+import time
+from threading import Lock
 from typing import Optional
+
+import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, jwk, JWTError
-from supabase import create_client
+
+from core.db import get_db
 
 logger = logging.getLogger("uvicorn.error")
 
 bearer = HTTPBearer(auto_error=False)
 
-# Supabase project uses ES256 (ECDSA P-256) for JWT signing.
-# Public key fetched from: https://<project>.supabase.co/auth/v1/.well-known/jwks.json
-_JWKS_KEY = {
+# Fallback estático por si el endpoint JWKS no responde en el arranque.
+# La fuente de verdad es el JWKS del proyecto (soporta rotación de llaves).
+_FALLBACK_JWKS_KEY = {
     "alg": "ES256",
     "crv": "P-256",
     "kid": "ecc5afea-9600-4df2-9bc7-a04170de1a8c",
@@ -21,21 +26,59 @@ _JWKS_KEY = {
     "x": "mC_bvzJpp5gLMxySa6xoFRRYuBk4Ey4UDMjl822Qa40",
     "y": "xEhV9NreOw2utUeR4XQpwJMkrCyIkm4fJbfsC9ZKGfM",
 }
-_PUBLIC_KEY = jwk.construct(_JWKS_KEY)
+
+_JWKS_TTL_SECONDS = 3600
+_jwks_lock = Lock()
+_jwks_cache: dict = {"keys": {}, "fetched_at": 0.0}
+
+
+def _fetch_jwks() -> dict:
+    """kid → (key construida, alg) desde el JWKS público de Supabase."""
+    url = f"{os.environ['SUPABASE_URL']}/auth/v1/.well-known/jwks.json"
+    resp = httpx.get(url, timeout=5.0)
+    resp.raise_for_status()
+    keys = {}
+    for k in resp.json().get("keys", []):
+        kid = k.get("kid")
+        if kid:
+            keys[kid] = (jwk.construct(k), k.get("alg", "ES256"))
+    return keys
+
+
+def _get_signing_key(kid: Optional[str]) -> tuple:
+    """
+    Resuelve la llave de firma por kid, refrescando el JWKS si venció el TTL
+    o si aparece un kid desconocido (rotación de llaves). Si el fetch falla,
+    sirve el cache viejo o el fallback estático antes que tirar el login.
+    """
+    with _jwks_lock:
+        now = time.time()
+        stale = now - _jwks_cache["fetched_at"] > _JWKS_TTL_SECONDS
+        unknown_kid = kid is not None and kid not in _jwks_cache["keys"]
+        if stale or unknown_kid:
+            try:
+                _jwks_cache["keys"] = _fetch_jwks()
+                _jwks_cache["fetched_at"] = now
+            except Exception as e:  # noqa: BLE001 — red caída: usar cache/fallback
+                logger.warning(f"[auth] No se pudo refrescar JWKS: {e}")
+                _jwks_cache["fetched_at"] = now  # no martillar el endpoint caído
+
+        if kid and kid in _jwks_cache["keys"]:
+            return _jwks_cache["keys"][kid]
+
+    return (jwk.construct(_FALLBACK_JWKS_KEY), _FALLBACK_JWKS_KEY["alg"])
 
 
 def _get_supabase():
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
-    )
+    """Wrapper delgado sobre el singleton — seam para los tests."""
+    return get_db()
 
 
 def get_business_id(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
 ) -> str:
     """
-    Validates a Supabase JWT (ES256) and returns the business_id.
+    Validates a Supabase JWT and returns the business_id.
     Falls back to a DB lookup when the Auth Hook hasn't injected business_id.
     """
     if credentials is None or not credentials.credentials:
@@ -47,10 +90,12 @@ def get_business_id(
 
     token = credentials.credentials
     try:
+        kid = jwt.get_unverified_header(token).get("kid")
+        key, alg = _get_signing_key(kid)
         payload = jwt.decode(
             token,
-            _PUBLIC_KEY,
-            algorithms=["ES256"],
+            key,
+            algorithms=[alg],
             options={"verify_aud": False},
         )
     except JWTError as e:
@@ -73,9 +118,8 @@ def get_business_id(
             detail="Token no contiene sub",
         )
 
-    db = _get_supabase()
     result = (
-        db.table("users")
+        _get_supabase().table("users")
         .select("business_id")
         .eq("id", user_id)
         .single()

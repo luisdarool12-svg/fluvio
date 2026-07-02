@@ -126,10 +126,11 @@ export default function CampanasPage() {
       const res = await apiFetch(`/campaigns/${id}/send`, { method: 'POST' })
       if (res.ok) {
         const data = await res.json()
-        showToast(`Enviada: ${data.sent} mensajes`)
+        showToast(`Enviando ${data.queued} mensajes en segundo plano`)
         load()
       } else {
-        showToast('Error al enviar', 'error')
+        const err = await res.json().catch(() => null)
+        showToast(err?.detail ?? 'Error al enviar', 'error')
       }
     } finally {
       setSending(null)
