@@ -1,5 +1,5 @@
 -- ============================================================
--- OptimizaAI — Esquema inicial multi-tenant
+-- Fluvio — Esquema inicial multi-tenant
 -- Migración: 001_initial_schema.sql
 -- Ejecutar en: Supabase Studio > SQL Editor
 -- ============================================================
