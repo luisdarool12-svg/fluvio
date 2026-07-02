@@ -74,9 +74,15 @@ const STYLES = `
   .lp-faq-btn { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px;
     background: none; border: none; cursor: pointer; padding: 20px 2px; text-align: left; font-family: ${FONT_UI}; }
 
+  @keyframes lpTicker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+  .lp-ticker-track { display: flex; align-items: center; white-space: nowrap; width: max-content;
+    animation: lpTicker 30s linear infinite; }
+  .lp-ticker-wrap:hover .lp-ticker-track { animation-play-state: paused; }
+
   @media (prefers-reduced-motion: reduce) {
     .lp-reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
     .lp-bubble, .lp-wa-dot { animation: none !important; }
+    .lp-ticker-track { animation: none !important; }
   }
 `
 
@@ -231,19 +237,35 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── 2 · SOCIAL PROOF ── */}
-      <section style={{ background: '#180F2E', padding: `22px ${PAD_X}` }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: '14px 18px', textAlign: 'center' }}>
-          <span style={{ fontSize: 14.5, color: 'rgba(255,255,255,.7)' }}><b style={{ fontWeight: 600, color: '#FF6A38' }}>+340 reservaciones</b> gestionadas este mes en La Terraza</span>
-          <span aria-hidden="true" style={{ color: 'rgba(255,255,255,.25)' }}>·</span>
-          <span style={{ fontSize: 14.5, color: 'rgba(255,255,255,.7)' }}><b style={{ fontWeight: 600, color: '#FF6A38' }}>0 no-shows</b> en las últimas 3 semanas</span>
-          <span aria-hidden="true" style={{ color: 'rgba(255,255,255,.25)' }}>·</span>
-          <span style={{ fontSize: 14.5, color: 'rgba(255,255,255,.7)' }}><b style={{ fontWeight: 600, color: '#FF6A38' }}>4.9 ★</b> en Google Maps</span>
-          <span aria-hidden="true" style={{ color: 'rgba(255,255,255,.25)' }}>·</span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14.5, color: 'rgba(255,255,255,.7)' }}>
-            <span style={{ width: 24, height: 24, borderRadius: 99, background: 'rgba(255,255,255,.12)', display: 'inline-grid', placeItems: 'center', fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 11, color: '#fff' }}>LT</span>
-            La Terraza · León, Guanajuato
-          </span>
+      {/* ── 2 · SOCIAL PROOF TICKER ── */}
+      <section className="lp-ticker-wrap" style={{ background: '#180F2E', borderTop: '1px solid rgba(100,71,245,.15)', borderBottom: '1px solid rgba(100,71,245,.15)', padding: '13px 0', overflow: 'hidden' }}>
+        <div className="lp-ticker-track">
+          {[0, 1].map((copy) => (
+            <span key={copy} style={{ display: 'inline-flex', alignItems: 'center' }} aria-hidden={copy === 1 ? true : undefined}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13.5, color: 'rgba(255,255,255,.6)', padding: '0 2.4rem' }}>
+                <span style={{ width: 22, height: 22, borderRadius: 6, background: 'rgba(100,71,245,.25)', border: '1px solid rgba(100,71,245,.4)', display: 'inline-grid', placeItems: 'center', fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 9, color: '#9B8CF8', flexShrink: 0 }}>LT</span>
+                <b style={{ fontWeight: 700, color: '#FF6A38' }}>+340 reservaciones</b> gestionadas este mes en La Terraza
+              </span>
+              <span aria-hidden="true" style={{ display: 'inline-block', width: 3, height: 3, borderRadius: '50%', background: 'rgba(255,255,255,.18)', margin: '0 1.2rem', flexShrink: 0 }} />
+              <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,.6)', padding: '0 2.4rem' }}>
+                <b style={{ fontWeight: 700, color: '#FF6A38' }}>0 no-shows</b> en las últimas 3 semanas
+              </span>
+              <span aria-hidden="true" style={{ display: 'inline-block', width: 3, height: 3, borderRadius: '50%', background: 'rgba(255,255,255,.18)', margin: '0 1.2rem', flexShrink: 0 }} />
+              <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,.6)', padding: '0 2.4rem' }}>
+                <b style={{ fontWeight: 700, color: '#FF6A38' }}>4.9 ★</b> en Google Maps
+              </span>
+              <span aria-hidden="true" style={{ display: 'inline-block', width: 3, height: 3, borderRadius: '50%', background: 'rgba(255,255,255,.18)', margin: '0 1.2rem', flexShrink: 0 }} />
+              <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,.6)', padding: '0 2.4rem' }}>
+                Respuesta promedio <b style={{ fontWeight: 700, color: '#FF6A38' }}>&lt;30 s</b> sin staff
+              </span>
+              <span aria-hidden="true" style={{ display: 'inline-block', width: 3, height: 3, borderRadius: '50%', background: 'rgba(255,255,255,.18)', margin: '0 1.2rem', flexShrink: 0 }} />
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13.5, color: 'rgba(255,255,255,.6)', padding: '0 2.4rem' }}>
+                <span style={{ width: 22, height: 22, borderRadius: 6, background: 'rgba(100,71,245,.25)', border: '1px solid rgba(100,71,245,.4)', display: 'inline-grid', placeItems: 'center', fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 9, color: '#9B8CF8', flexShrink: 0 }}>LT</span>
+                La Terraza · León, Guanajuato · Piloto activo 2025
+              </span>
+              <span aria-hidden="true" style={{ display: 'inline-block', width: 3, height: 3, borderRadius: '50%', background: 'rgba(255,255,255,.18)', margin: '0 1.2rem', flexShrink: 0 }} />
+            </span>
+          ))}
         </div>
       </section>
 
